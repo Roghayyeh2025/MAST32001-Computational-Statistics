@@ -4,8 +4,6 @@
 ############
 ## PART A ##
 ############
-
-ا
 # LATENT-VARIABLE REPRESENTATION AND GIBBS SAMPLER
 
 

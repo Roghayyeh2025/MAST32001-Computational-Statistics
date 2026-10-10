@@ -81,6 +81,7 @@ stationary
 #blocks we have that the length is fixed and just have to sample the starting point of the block.
 #iid resampling of individual observations is generally inappropriate for a dependent time series because it 
 #doesn't preserves the indipendence of the observations.
+#The stationary bootstrap gives a stationary series while the block bootstrap doesn't.
 
 #functions
 #block function
@@ -161,18 +162,170 @@ funiid=function(dat){
 iid=funiid(datagrap)
 acf(iid)#our local dependence isn't preserved.
 
+#I could also check some ACF for other bootstrap samples (repeating the same bootstrap twice for example)
 
 
+#
+###PART C###
+#
+install.packages('JADE')
+library(JADE)
+?rjd
 
+#creation of the array 10x10x12 to use the rjd function. We are interested in different (12) autocorrelations 
+#because SOBI uses them (while AMUSE uses just lag 1). The choice of 12 follows from the methodology in the paper.
+#We work with the whitened data, since it is required in the preprocessing of SOBI.
+arr=array(0,c(10,10,12))
+for (i in 1:12) {
+  arr[,,i]=autoc(i)
+}
+arr
+dim(arr)
+#joint diagonalization
+arrdiag=rjd(arr)
+str(arrdiag)
+dim(arrdiag$V)#the orthogonal matrix that is used to diagonalize
+arrdiag$V%*%t(arrdiag$V)#It's orthogonal: V*V^T=I. In the paper is called t(U_Tao)
+dim(arrdiag$D)#the transformed matrices by the joint diagonalization
+#rjd found the orthogonal matrix V so that every D_r=V^T*autoc_tao*V is almost diagonal (for every lag tao from 1 to 12)
+#The different D_tao (tao:1,...,12) are not really diagonal, because normally doesn't exist a matrix that can
+#diagonalize all 12 matrices at the same time. But in our case the diagonalization is quite bad.
+toten=sum(arrdiag$D^2)#total energy
+diagen=0
+for (i in 1:12) {
+  diagen=diagen+sum(diag(arrdiag$D[,,i])^2)
+}
+diagen#energy on every diagonal
+offen=toten-diagen#energy outside the diagonals
+offen/toten#almost half of the energy is stil outside the diagonals. The joint diagonalization tries to minimize
+#this value, but some times the results will be bad just because of how the data are.
+#Lets compare it to the result before the diagonalization
+diagen=0
+for (i in 1:12) {
+  diagen=diagen+sum(diag(arr[,,i])^2)
+}
+diagen
+(sum(arr^2)-diagen)/sum(arr^2)#before we had 82.8% of the energy outside the diagonals, so the diagonalization
+#gave us a better situation
+#The fact that the matrices autoc(tao) where not symmetric could have not let us have the best diagonalization
 
+#Now I want to get the ten values that gives us the importance of each directions, to get them in SOBI we 
+#combine the informations for each lag.
+lambda=numeric(10)
+for (i in 1:10) {
+  lambda[i]=sum(arrdiag$D[i,i,]^2)
+}
+lambda
+ord=order(lambda, decreasing = T)
+lambdaord=numeric(10)
+for (i in 1:10) {
+  lambdaord[i]=lambda[ord[i]]
+}
+lambdaord #lambda ordered
+#Now we can order the SOBI directions based on the associated values lambda
+arrdiag$V
+sobidir=matrix(rep(0,100), nrow = 10)
+for (i in 1:10) {
+  sobidir[,i]=arrdiag$V[,ord[i]]
+}
+sobidir #The SOBI directions are ordered
+sobidir%*%t(sobidir) #still orthogonal
 
+#definition of the function phi(k)
+phi=numeric(10)
+for (i in 1:10) {
+  phi[i]=lambdaord[i]/(1+sum(lambdaord))
+}
+phi
+plot(c(0,1,2,3,4,5,6,7,8,9),phi, type = 'l')
+#we had from 1 to 10, but in the paper we have from 0 to 9: that's why I specified it.
+#phi measurs how much second order serial dependence is associated to the sobi direction of rank k.
+#An high phi(k) means that the directions presents a second order serial dependence relatively strong.
+#We use it because the white noise variables doesn't have second order serial dependence (so we can recognize
+#them also with phi).
 
+#Now we need f(k), that evaluates the stability of the estimated subspaces.
+#For the bootstrap I would choose a stattionary bootstrap with p=.005: in this way the resampled serie is 
+#stationary, the temporal dependence is almost preserved (p isn't too big) and we will have also a good
+#variability (p isn't too small): it's a good compromise between the two requests.
+#I choose B=1000
+B=1000
+S2boot=array(0,c(10,10,1000))
+sobidirboot=array(0,c(10,10,1000))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.05)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  datac
+  apply(datac, 2, mean)
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  D2
+  S2=sing$u%*%D2%*%t(sing$u)
+  S2boot[,,j]=S2
+  #whitening
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(i)
+  }
+  arrdiag=rjd(arr, maxiter = 300)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  lambda
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  lambdaord #lambda ordered
+  #Now we can order the SOBI directions based on the associated values lambda
+  arrdiag$V
+  sobidir=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot[,,j]=sobidir
+}
+S2boot
+sobidirboot
+#NOW RUN EVERYTHING ON TOP OF B=1000 JUST TO GET THE VALUES FOR THE ORIGINAL DATA
+#Then
+f_0=numeric(10)
+detj=numeric(10)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj=sobidirboot[,1:(k-1),j]
+    detj[j]=1-abs(det(t(B_k)%*%B_kj))
+  }
+  f_0[k]=1/B*sum(detj)
+}
+f_0
+plot(c(0,1,2,3,4,5,6,7,8,9),f_0, type = 'l')
+#standardize to get f
+f=numeric(10)
+for (k in 1:10) {
+  f[k]=f_0[k]/(1+sum(f_0))
+}
+f
+plot(c(0,1,2,3,4,5,6,7,8,9),f, type = 'l')
+#getting g
+g=numeric(10)
+for (k in 1:10) {
+  g[k]=f[k]+phi[k]
+}
+g
+plot(c(0,1,2,3,4,5,6,7,8,9),g, type = 'l')#we pick q=3
 
-
-
-
-
-
+#point out the intermadiate checks.
+#Then create simulate data to see if g works.
 
 
 

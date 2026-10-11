@@ -293,7 +293,7 @@ for (j in 1:B) {
 }
 
 sobidirboot
-#NOW RUN EVERYTHING ON TOP OF B=1000 JUST TO GET THE VALUES FOR THE ORIGINAL DATA
+#NOW RUN EVERYTHING ON TOP OF B=500 JUST TO GET THE VALUES FOR THE ORIGINAL DATA
 #Then
 f_0=numeric(10)
 detj=numeric(B)
@@ -1798,6 +1798,637 @@ sd_q2 = apply(qhat2, 2, sd)
 sd_q2#1.851999  1.875170  1.873014  1.874092  1.876462  1.752891
 #The joint diagonalization algorithm was run with a convergence tolerance of 10^(-3) and a maximum of 300 iterations
 #This choice was made to have a lower computational cost.
+
+
+
+#
+###PART E###
+#
+#I will redo a lot of rcode. Then I'll have to clean it
+data=timeseries_dat
+datamat=as.matrix(data)
+means=apply(data, 2, mean)
+datac=sweep(data,2,means,'-') 
+S=cov(datac) 
+sing=svd(S)
+D2=diag(sing$d^(-0.5)) 
+S2=sing$u%*%D2%*%t(sing$u)
+datac2=as.matrix(datac)
+dataw=datac2%*%S2 
+cov(dataw)
+autoc=function(dataw,r){
+  n=nrow(dataw)
+  A=dataw[1:(n-r),]
+  B=dataw[(1+r):n,] 
+  aut=(t(A)%*%B)/(n-r) 
+  aut
+}
+funblock=function(dat,l){
+  n=nrow(dat)
+  nvar=ncol(dat)
+  m=ceiling(n/l) 
+  block=matrix(rep(0,m*l*nvar), nrow =m*l )
+  j=1
+  for (i in 1:m) {
+    star=sample(1:(n-l+1), size=1) 
+    block[j:(j+l-1),]=dat[star:(star+(l-1)),]
+    j=j+l
+  }
+  block[1:n, ]
+}
+
+funstat=function(dat,p){
+  n=nrow(dat)
+  nvar=ncol(dat)
+  stationary=matrix(rep(0,n*nvar), nrow =n )
+  dat2=matrix(rep(0,n*nvar*2), nrow=n*2)
+  dat2[1:n,]=dat
+  dat2[(n+1):(2*n),]=dat
+  star=sample(1:n, size=1)
+  stationary[1,]=dat2[star,]
+  for (i in 2:n) {
+    if (runif(1)>=p) {
+      star=star+1
+      stationary[i,]=dat2[star,]
+    } else {
+      star=sample(1:n, size=1)
+      stationary[i,]=dat2[star,]
+    }
+  }
+  stationary
+}
+
+arr=array(0,c(10,10,12))
+for (i in 1:12) {
+  arr[,,i]=autoc(dataw,i)
+}
+arrdiag=rjd(arr)
+lambda=numeric(10)
+for (i in 1:10) {
+  lambda[i]=sum(arrdiag$D[i,i,]^2)
+}
+ord=order(lambda, decreasing = T)
+lambdaord=numeric(10)
+for (i in 1:10) {
+  lambdaord[i]=lambda[ord[i]]
+}
+sobidir=matrix(rep(0,100), nrow = 10)
+for (i in 1:10) {
+  sobidir[,i]=arrdiag$V[,ord[i]]
+}
+sobidir 
+#definition of the function phi(k)
+phi=numeric(10)
+for (i in 1:10) {
+  phi[i]=lambdaord[i]/(1+sum(lambdaord))
+}
+phi
+plot(c(0,1,2,3,4,5,6,7,8,9),phi, type = 'l')
+#definition of f 
+#stationary with p=0.02
+B=500
+sobidirboot1=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.02)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot1[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot1
+f_0=numeric(10)
+detj=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj=sobidirboot1[,1:(k-1),j]
+    detj[j]=1-abs(det(t(B_k)%*%B_kj))
+  }
+  f_0[k]=1/B*sum(detj)
+}
+f_0
+plot(c(0,1,2,3,4,5,6,7,8,9),f_0, type = 'l')
+#standardize to get f
+f=numeric(10)
+for (k in 1:10) {
+  f[k]=f_0[k]/(1+sum(f_0))
+}
+f
+plot(c(0,1,2,3,4,5,6,7,8,9),f, type = 'l')
+#getting g
+g=numeric(10)
+for (k in 1:10) {
+  g[k]=f[k]+phi[k]
+}
+g
+k=0:9
+plot(k,g, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with p=0.05
+B=500
+sobidirboot2=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.05)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot2[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot2
+f_02=numeric(10)
+detj2=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj2=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj2=sobidirboot2[,1:(k-1),j]
+    detj2[j]=1-abs(det(t(B_k)%*%B_kj2))
+  }
+  f_02[k]=1/B*sum(detj2)
+}
+f_02
+plot(c(0,1,2,3,4,5,6,7,8,9),f_02, type = 'l')
+#standardize to get f
+f2=numeric(10)
+for (k in 1:10) {
+  f2[k]=f_02[k]/(1+sum(f_02))
+}
+f2
+plot(c(0,1,2,3,4,5,6,7,8,9),f2, type = 'l')
+#getting g
+g2=numeric(10)
+for (k in 1:10) {
+  g2[k]=f2[k]+phi[k]
+}
+g2
+k=0:9
+plot(k,g2, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f2, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with p=0.1
+B=500
+sobidirboot3=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.1)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot3[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot3
+f_03=numeric(10)
+detj3=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj3=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj3=sobidirboot3[,1:(k-1),j]
+    detj3[j]=1-abs(det(t(B_k)%*%B_kj3))
+  }
+  f_03[k]=1/B*sum(detj3)
+}
+f_03
+plot(c(0,1,2,3,4,5,6,7,8,9),f_03, type = 'l')
+#standardize to get f
+f3=numeric(10)
+for (k in 1:10) {
+  f3[k]=f_03[k]/(1+sum(f_03))
+}
+f3
+plot(c(0,1,2,3,4,5,6,7,8,9),f3, type = 'l')
+#getting g
+g3=numeric(10)
+for (k in 1:10) {
+  g3[k]=f3[k]+phi[k]
+}
+g3
+k=0:9
+plot(k,g3, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=2!!! The short lebgth doesn't preserve the dependence!
+lines(k, f3, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with p=0.02
+B=500
+sobidirboot1=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.02)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot1[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot1
+f_0=numeric(10)
+detj=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj=sobidirboot1[,1:(k-1),j]
+    detj[j]=1-abs(det(t(B_k)%*%B_kj))
+  }
+  f_0[k]=1/B*sum(detj)
+}
+f_0
+plot(c(0,1,2,3,4,5,6,7,8,9),f_0, type = 'l')
+#standardize to get f
+f=numeric(10)
+for (k in 1:10) {
+  f[k]=f_0[k]/(1+sum(f_0))
+}
+f
+plot(c(0,1,2,3,4,5,6,7,8,9),f, type = 'l')
+#getting g
+g=numeric(10)
+for (k in 1:10) {
+  g[k]=f[k]+phi[k]
+}
+g
+k=0:9
+plot(k,g, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with p=0.05
+B=500
+sobidirboot2=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funstat(datamat,0.05)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot2[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot2
+f_02=numeric(10)
+detj2=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj2=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj2=sobidirboot2[,1:(k-1),j]
+    detj2[j]=1-abs(det(t(B_k)%*%B_kj2))
+  }
+  f_02[k]=1/B*sum(detj2)
+}
+f_02
+plot(c(0,1,2,3,4,5,6,7,8,9),f_02, type = 'l')
+#standardize to get f
+f2=numeric(10)
+for (k in 1:10) {
+  f2[k]=f_02[k]/(1+sum(f_02))
+}
+f2
+plot(c(0,1,2,3,4,5,6,7,8,9),f2, type = 'l')
+#getting g
+g2=numeric(10)
+for (k in 1:10) {
+  g2[k]=f2[k]+phi[k]
+}
+g2
+k=0:9
+plot(k,g2, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f2, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with l=50
+B=500
+sobidirboot4=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funblock(datamat,50)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot4[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot4
+f_04=numeric(10)
+detj4=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj4=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj4=sobidirboot4[,1:(k-1),j]
+    detj4[j]=1-abs(det(t(B_k)%*%B_kj4))
+  }
+  f_04[k]=1/B*sum(detj4)
+}
+f_04
+plot(c(0,1,2,3,4,5,6,7,8,9),f_04, type = 'l')
+#standardize to get f
+f4=numeric(10)
+for (k in 1:10) {
+  f4[k]=f_04[k]/(1+sum(f_04))
+}
+f4
+plot(c(0,1,2,3,4,5,6,7,8,9),f4, type = 'l')
+#getting g
+g4=numeric(10)
+for (k in 1:10) {
+  g4[k]=f4[k]+phi[k]
+}
+g4
+k=0:9
+plot(k,g4, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f4, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with l=20
+B=500
+sobidirboot5=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funblock(datamat,20)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot5[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot5
+f_05=numeric(10)
+detj5=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj5=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj5=sobidirboot5[,1:(k-1),j]
+    detj5[j]=1-abs(det(t(B_k)%*%B_kj5))
+  }
+  f_05[k]=1/B*sum(detj5)
+}
+f_05
+plot(c(0,1,2,3,4,5,6,7,8,9),f_05, type = 'l')
+#standardize to get f
+f5=numeric(10)
+for (k in 1:10) {
+  f5[k]=f_05[k]/(1+sum(f_05))
+}
+f5
+plot(c(0,1,2,3,4,5,6,7,8,9),f5, type = 'l')
+#getting g
+g5=numeric(10)
+for (k in 1:10) {
+  g5[k]=f5[k]+phi[k]
+}
+g5
+k=0:9
+plot(k,g5, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=3
+lines(k, f5, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
+#stationary with l=10
+B=500
+sobidirboot6=array(0,c(10,10,B))
+set.seed(123)
+for (j in 1:B) {
+  datab=funblock(datamat,10)
+  means=apply(datab, 2, mean)
+  datac=sweep(datab,2,means,'-') 
+  S=cov(datac)
+  sing=svd(S)
+  D2=diag(sing$d^(-0.5)) 
+  S2=sing$u%*%D2%*%t(sing$u)
+  datac2=as.matrix(datac)
+  dataw=datac2%*%S2 
+  arr=array(0,c(10,10,12))
+  for (i in 1:12) {
+    arr[,,i]=autoc(dataw,i)
+  }
+  arrdiag=rjd(arr, maxiter = 1000)
+  lambda=numeric(10)
+  for (i in 1:10) {
+    lambda[i]=sum(arrdiag$D[i,i,]^2)
+  }
+  ord=order(lambda, decreasing = T)
+  lambdaord=numeric(10)
+  for (i in 1:10) {
+    lambdaord[i]=lambda[ord[i]]
+  }
+  sobidir2=matrix(rep(0,100), nrow = 10)
+  for (i in 1:10) {
+    sobidir2[,i]=arrdiag$V[,ord[i]]
+  }
+  sobidirboot6[,,j]=sobidir2
+  cat("Bootstrap:",j,"of",B,"completed\n")
+}
+
+sobidirboot6
+f_06=numeric(10)
+detj6=numeric(B)
+for (k in 2:10) {
+  B_k=sobidir[,1:(k-1), drop=F]
+  for (j in 1:B) {
+    B_kj6=matrix(rep(0,10*(k-1)), nrow=10)
+    B_kj6=sobidirboot6[,1:(k-1),j]
+    detj6[j]=1-abs(det(t(B_k)%*%B_kj6))
+  }
+  f_06[k]=1/B*sum(detj6)
+}
+f_06
+plot(c(0,1,2,3,4,5,6,7,8,9),f_06, type = 'l')
+#standardize to get f
+f6=numeric(10)
+for (k in 1:10) {
+  f6[k]=f_06[k]/(1+sum(f_06))
+}
+f6
+plot(c(0,1,2,3,4,5,6,7,8,9),f6, type = 'l')
+#getting g
+g6=numeric(10)
+for (k in 1:10) {
+  g6[k]=f6[k]+phi[k]
+}
+g6
+k=0:9
+plot(k,g6, type = 'l', ylim = c(0,0.2), lwd=2)#we pick q=2. The blocks are too shorts.
+lines(k, f6, col="blue", lwd=1, lty=1)
+lines(k, phi, col="red", lwd=1, lty=1)
+
 
 
 

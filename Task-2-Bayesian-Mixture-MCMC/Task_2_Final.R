@@ -138,9 +138,9 @@ standardise_data <- function(y) {
 #     beta0 + 0.5 * sum_i (y_i - mu_Zi)^2
 #   )
 
-# Next, I will work on implementing the Gibbs sampler,
-# storing posterior draws, assessing Markov chain behaviour,
-# and justifying the choice of the number of iterations.
+# Now, I have drived the full conditional distributions.
+# The following section implements the Gibbs sampler,
+# stores posterior draws, and assesses Markov chain behaviour.
 
 # 5. GIBBS SAMPLER IMPLEMENTED FROM SCRATCH
 
@@ -357,22 +357,499 @@ summary_table <- rbind(
   sigma2 = posterior_summary(check_draws$sigma2)
 )
 
-# Remaining consideration:
-# The chosen number of iterations and burn-in are preliminary.
-#I think we should justify them using convergence diagnostics,  
-#such as trace plots, autocorrelation, ESS, and comparisons 
-#between multiple chains, and check whether the posterior  
-#summaries remain stable. We can work on this as 
-#the next step to complete Part A.
 
-
+# Part A is complete: I specified initialization and preliminary iteration
+# settings.
+# Part B evaluates chain behaviour to assess their adequacy.
+# I will assess their adequacy using convergence diagnostics
+# in Part B.
 
 ############
 ## PART B ##
 ############
 
+#  SIMULATION SETTINGS
+
+set.seed(20261012)
+n_sim <- 300
+true_pi <- 0.5
+true_sigma <- 1
+
+# Clearly separated: the mean difference is four standard deviations.
+
+scenario_separated <- list(
+  name = "Clearly separated",
+  mu1 = -2,
+  mu2 =  2,
+  pi = true_pi,
+  sigma = true_sigma
+)
+
+# Substantially overlapping: the mean difference is 1.5 standard deviations.
+
+scenario_overlapping <- list(
+  name = "Substantially overlapping",
+  mu1 = -0.75,
+  mu2 =  0.75,
+  pi = true_pi,
+  sigma = true_sigma
+)
+
+# Generate observations from the known mixture and retain the generating
+# component indicators for the later allocation-recovery assessment.
+
+simulate_mixture <- function(n, mu1, mu2, pi, sigma) {
+  z_true <- ifelse(runif(n) < pi, 1L, 2L)
+  y <- numeric(n)
+  y[z_true == 1L] <- rnorm(sum(z_true == 1L), mean = mu1, sd = sigma)
+  y[z_true == 2L] <- rnorm(sum(z_true == 2L), mean = mu2, sd = sigma)
+  
+  list(y = y, z_true = z_true)
+}
+
+sim_sep <- simulate_mixture(
+  n_sim, scenario_separated$mu1, scenario_separated$mu2,
+  scenario_separated$pi, scenario_separated$sigma
+)
+
+sim_overlap <- simulate_mixture(
+  n_sim, scenario_overlapping$mu1, scenario_overlapping$mu2,
+  scenario_overlapping$pi, scenario_overlapping$sigma
+)
+
+# Visualise the generated data and the true component densities.
+
+plot_simulated_mixture <- function(sim, pars, main) {
+  hist(sim$y, breaks = 25, probability = TRUE,
+       col = "grey85", border = "white",
+       main = main, xlab = "y", ylim = c(0, max(
+         density(sim$y)$y,
+         dnorm(seq(min(sim$y), max(sim$y), length.out = 300),
+               pars$mu1, pars$sigma),
+         dnorm(seq(min(sim$y), max(sim$y), length.out = 300),
+               pars$mu2, pars$sigma)
+       ) * 1.15))
+  xx <- seq(min(sim$y) - 0.5, max(sim$y) + 0.5, length.out = 500)
+  lines(xx, pars$pi * dnorm(xx, pars$mu1, pars$sigma), lwd = 2)
+  lines(xx, (1 - pars$pi) * dnorm(xx, pars$mu2, pars$sigma), lwd = 2, lty = 2)
+  lines(xx, pars$pi * dnorm(xx, pars$mu1, pars$sigma) +
+          (1 - pars$pi) * dnorm(xx, pars$mu2, pars$sigma), lwd = 2, lty = 3)
+  legend("topright",
+         legend = c("Component 1", "Component 2", "Mixture"),
+         lty = c(1, 2, 3), lwd = 2, bty = "n")
+}
+
+par(mfrow = c(1, 2))
+plot_simulated_mixture(sim_sep, scenario_separated,
+                       "Part B: clearly separated mixture")
+plot_simulated_mixture(sim_overlap, scenario_overlapping,
+                       "Part B: overlapping mixture")
+par(mfrow = c(1, 1))
 
 
+#  MULTIPLE CHAINS FROM DIFFERENT INITIAL VALUES
+#
+# The initial means are deliberately dispersed and include reversed
+# component labels. This helps reveal sensitivity to initial values and
+# label switching. The sampler itself is not constrained to keep mu1 < mu2.
+#
+# These are pilot settings. Diagnostics below should be inspected before
+# treating the selected run length as adequate.
+
+n_iter_B <- 12000
+burn_B <- 4000
+thin_B <- 2
+n_chains_B <- 3
+
+make_initial_values <- function(y, chain_id) {
+# Different starting values for each chain. The allocation vector is
+# independently randomised, and the initial variance is kept positive.
+  starts <- list(
+    c(-1.5,  1.5),
+    c( 1.5, -1.5),
+    c(-0.25, 0.25)
+  )
+  list(
+    mu1 = starts[[chain_id]][1],
+    mu2 = starts[[chain_id]][2],
+    pi = c(0.35, 0.65, 0.50)[chain_id],
+    sigma2 = c(1.5, 0.7, 2.0)[chain_id],
+    z = sample(1:2, length(y), replace = TRUE)
+  )
+}
+
+run_scenario_chains <- function(sim, scenario_name) {
+  chains <- vector("list", n_chains_B)
+  
+  for (ch in seq_len(n_chains_B)) {
+    chains[[ch]] <- gibbs_mix(
+      y = sim$y,
+      n_iter = n_iter_B,
+      burn = burn_B,
+      thin = thin_B,
+      init = make_initial_values(sim$y, ch),
+      m0 = m0,
+      s0_sq = s0_sq,
+      a = a,
+      b = b,
+      alpha0 = alpha0,
+      beta0 = beta0,
+      seed = 3100 + ch
+    )
+  }
+  
+  names(chains) <- paste0("chain", seq_len(n_chains_B))
+  attr(chains, "scenario") <- scenario_name
+  chains
+}
+
+chains_separated <- run_scenario_chains(sim_sep, "Clearly separated")
+chains_overlapping <- run_scenario_chains(sim_overlap, "Substantially overlapping")
+
+
+#  LABEL-INVARIANT SUMMARIES
+#
+# The likelihood is unchanged when the two component labels are exchanged.
+# For comparing component means across chains, order the means within each
+# saved draw. The corresponding allocation labels and mixture weight are
+# relabelled in the same draw. This is a post-processing device for the
+# simulation comparison, not a constraint imposed on the Gibbs sampler.
+
+align_chain_draws <- function(chain) {
+  m <- length(chain$mu1)
+  mu_low <- pmin(chain$mu1, chain$mu2)
+  mu_high <- pmax(chain$mu1, chain$mu2)
+  component_1_is_low <- chain$mu1 <= chain$mu2
+  
+  pi_low <- ifelse(component_1_is_low, chain$pi, 1 - chain$pi)
+  z_low <- chain$z
+  for (i in seq_len(m)) {
+    if (!component_1_is_low[i]) z_low[i, ] <- 3L - z_low[i, ]
+  }
+  
+  list(
+    mu_low = mu_low,
+    mu_high = mu_high,
+    pi_low = pi_low,
+    sigma2 = chain$sigma2,
+    z_low = z_low
+  )
+}
+
+aligned_separated <- lapply(chains_separated, align_chain_draws)
+aligned_overlapping <- lapply(chains_overlapping, align_chain_draws)
+
+
+#  POSTERIOR SUMMARIES AND RECOVERY OF GENERATING VALUES
+
+posterior_summary_B <- function(x) {
+  q <- quantile(x, probs = c(0.025, 0.5, 0.975), na.rm = TRUE)
+  c(
+    Mean = mean(x),
+    SD = sd(x),
+    Q2.5 = unname(q[1]),
+    Median = unname(q[2]),
+    Q97.5 = unname(q[3])
+  )
+}
+
+combine_parameter_draws <- function(aligned_chains) {
+  do.call(rbind, lapply(aligned_chains, function(ch) {
+    data.frame(
+      mu_low = ch$mu_low,
+      mu_high = ch$mu_high,
+      pi_low = ch$pi_low,
+      sigma2 = ch$sigma2
+    )
+  }))
+}
+
+draws_sep <- combine_parameter_draws(aligned_separated)
+draws_overlap <- combine_parameter_draws(aligned_overlapping)
+
+summary_separated <- rbind(
+  lower_mean = posterior_summary_B(draws_sep$mu_low),
+  upper_mean = posterior_summary_B(draws_sep$mu_high),
+  mixing_weight_for_lower_mean = posterior_summary_B(draws_sep$pi_low),
+  common_variance = posterior_summary_B(draws_sep$sigma2)
+)
+
+summary_overlapping <- rbind(
+  lower_mean = posterior_summary_B(draws_overlap$mu_low),
+  upper_mean = posterior_summary_B(draws_overlap$mu_high),
+  mixing_weight_for_lower_mean = posterior_summary_B(draws_overlap$pi_low),
+  common_variance = posterior_summary_B(draws_overlap$sigma2)
+)
+
+cat("\nPART B: posterior summaries, clearly separated mixture\n")
+print(round(summary_separated, 3))
+cat("\nTrue values (ordered means, weight of lower-mean component, variance):\n")
+print(c(mu_low = scenario_separated$mu1,
+        mu_high = scenario_separated$mu2,
+        pi_low = scenario_separated$pi,
+        sigma2 = scenario_separated$sigma^2))
+
+cat("\nPART B: posterior summaries, overlapping mixture\n")
+print(round(summary_overlapping, 3))
+cat("\nTrue values (ordered means, weight of lower-mean component, variance):\n")
+print(c(mu_low = scenario_overlapping$mu1,
+        mu_high = scenario_overlapping$mu2,
+        pi_low = scenario_overlapping$pi,
+        sigma2 = scenario_overlapping$sigma^2))
+
+#  TRACE PLOTS
+#
+# Plot ordered means and the variance. Ordered means are used here to avoid
+# mistaking label exchange for a change in the underlying mixture. The
+# un-ordered mu1 and mu2 traces can also be inspected to see label switching.
+
+plot_chain_traces <- function(aligned_chains, main_prefix) {
+  par(mfrow = c(3, 1), mar = c(3, 4, 2, 1))
+  vars <- c("mu_low", "mu_high", "sigma2")
+  for (v in vars) {
+    all_y <- unlist(lapply(aligned_chains, function(ch) ch[[v]]))
+    plot(aligned_chains[[1]][[v]], type = "l", col = 1,
+         xlab = "Stored post-burn-in draw", ylab = v,
+         main = paste(main_prefix, "-", v),
+         ylim = range(all_y, finite = TRUE))
+    if (length(aligned_chains) > 1) {
+      for (ch in 2:length(aligned_chains)) {
+        lines(aligned_chains[[ch]][[v]], col = ch)
+      }
+    }
+  }
+  legend("topright", legend = names(aligned_chains),
+         col = seq_along(aligned_chains), lty = 1, bty = "n")
+  par(mfrow = c(1, 1))
+}
+
+plot_chain_traces(aligned_separated, "Separated mixture")
+plot_chain_traces(aligned_overlapping, "Overlapping mixture")
+
+
+#  AUTOCORRELATION AND EFFECTIVE SAMPLE SIZE (ESS)
+
+# ESS is estimated separately for each chain from its autocorrelation sequence
+# using a positive-pair truncation rule, then summed across chains. The result
+# is an approximate diagnostic, not a substitute for a validated MCMC package.
+# MCSE for the posterior mean is approximated by posterior SD / sqrt(ESS).
+# The trace plots and between-chain comparisons should be considered too.
+
+ess_one_chain <- function(x, max_lag = NULL) {
+  x <- as.numeric(x)
+  n <- length(x)
+  if (n < 3 || !is.finite(sd(x)) || sd(x) == 0) return(NA_real_)
+  if (is.null(max_lag)) max_lag <- min(n - 1, 1000)
+  
+  ac <- as.numeric(acf(x, lag.max = max_lag, plot = FALSE,
+                       demean = TRUE)$acf)[-1]
+  if (!length(ac)) return(n)
+  
+# Sum autocorrelations in adjacent pairs and stop at the first
+# non-positive pair, a simple approximation to the initial-positive-sequence
+# approach used in MCMC diagnostics.
+  pair_sums <- numeric(0)
+  j <- 1
+  while (j <= length(ac)) {
+    pair_sum <- ac[j]
+    if (j + 1 <= length(ac)) pair_sum <- pair_sum + ac[j + 1]
+    if (!is.finite(pair_sum) || pair_sum <= 0) break
+    pair_sums <- c(pair_sums, pair_sum)
+    j <- j + 2
+  }
+  
+  tau <- max(1, 1 + 2 * sum(pair_sums))
+  min(n, n / tau)
+}
+
+ess_multi_chain <- function(aligned_chains, variable) {
+  sum(vapply(aligned_chains, function(ch) ess_one_chain(ch[[variable]]),
+             numeric(1)), na.rm = TRUE)
+}
+
+diagnostic_ess_table <- function(aligned_chains) {
+  variables <- c("mu_low", "mu_high", "pi_low", "sigma2")
+  all_draws <- combine_parameter_draws(aligned_chains)
+  ess_values <- vapply(variables, function(v) {
+    ess_multi_chain(aligned_chains, v)
+  }, numeric(1))
+  posterior_sd <- vapply(variables, function(v) sd(all_draws[[v]]), numeric(1))
+  
+  data.frame(
+    parameter = variables,
+    stored_draws = nrow(all_draws),
+    ESS_total = unname(ess_values),
+    posterior_SD = unname(posterior_sd),
+    MCSE_mean_approx = unname(posterior_sd / sqrt(ess_values))
+  )
+}
+
+ess_separated <- diagnostic_ess_table(aligned_separated)
+ess_overlapping <- diagnostic_ess_table(aligned_overlapping)
+
+cat("\nApproximate ESS: clearly separated mixture\n")
+print(ess_separated, row.names = FALSE)
+cat("\nApproximate ESS: overlapping mixture\n")
+print(ess_overlapping, row.names = FALSE)
+
+# ACF plots for representative label-invariant parameters from the first
+# chain. Slow decay indicates stronger serial dependence.
+
+par(mfrow = c(2, 2))
+for (v in c("mu_low", "mu_high", "pi_low", "sigma2")) {
+  acf(aligned_separated[[1]][[v]], main = paste("Separated:", v))
+}
+par(mfrow = c(1, 1))
+
+par(mfrow = c(2, 2))
+for (v in c("mu_low", "mu_high", "pi_low", "sigma2")) {
+  acf(aligned_overlapping[[1]][[v]], main = paste("Overlapping:", v))
+}
+par(mfrow = c(1, 1))
+
+# BASIC MULTI-CHAIN R-HAT
+# This is the classical Gelman-Rubin potential scale reduction estimate
+# calculated from equal-length chains. The reported estimate is bounded below
+# by 1. Values close to 1 are reassuring,
+# but no single threshold proves convergence. Interpret it together with
+# trace plots, ESS, autocorrelation, and stability under longer runs.
+
+rhat_basic <- function(chains) {
+  n <- min(vapply(chains, length, integer(1)))
+  m <- length(chains)
+  if (m < 2 || n < 2) return(NA_real_)
+  
+  mat <- sapply(chains, function(x) as.numeric(x[seq_len(n)]))
+  chain_means <- colMeans(mat)
+  chain_vars <- apply(mat, 2, var)
+  W <- mean(chain_vars)
+  B <- n * var(chain_means)
+  
+  if (!is.finite(W) || W <= 0) return(NA_real_)
+  var_hat <- ((n - 1) / n) * W + B / n
+# The conventional reported potential scale reduction factor is
+# bounded below by 1; small-sample estimates can otherwise fall below 1.
+  max(1, sqrt(var_hat / W))
+}
+
+diagnostic_rhat_table <- function(aligned_chains) {
+  variables <- c("mu_low", "mu_high", "pi_low", "sigma2")
+  data.frame(
+    parameter = variables,
+    Rhat_classical = vapply(variables, function(v) {
+      rhat_basic(lapply(aligned_chains, function(ch) ch[[v]]))
+    }, numeric(1))
+  )
+}
+rhat_separated <- diagnostic_rhat_table(aligned_separated)
+rhat_overlapping <- diagnostic_rhat_table(aligned_overlapping)
+
+cat("\nR-hat: clearly separated mixture\n")
+print(rhat_separated, row.names = FALSE)
+
+cat("\nR-hat: overlapping mixture\n")
+print(rhat_overlapping, row.names = FALSE)
+
+
+# RECOVERY OF LATENT ALLOCATIONS
+#
+# Allocation recovery is evaluated after aligning labels within each draw.
+# For each observation, estimate the posterior probability of belonging to
+# the lower-mean component, then classify at 0.5. Accuracy is descriptive:
+# it is expected to be lower in the overlapping case because the components
+# generate observations in the same region.
+
+allocation_recovery <- function(aligned_chains, z_true) {
+  z_draws <- do.call(rbind, lapply(aligned_chains, function(ch) ch$z_low))
+  prob_lower <- colMeans(z_draws == 1L)
+  z_hat <- ifelse(prob_lower >= 0.5, 1L, 2L)
+  data.frame(
+    posterior_mean_probability_lower = mean(prob_lower),
+    classification_accuracy = mean(z_hat == z_true),
+    mean_allocation_uncertainty = mean(2 * pmin(prob_lower, 1 - prob_lower)),
+    n_observations = length(z_true)
+  )
+}
+
+allocation_sep <- allocation_recovery(aligned_separated, sim_sep$z_true)
+allocation_overlap <- allocation_recovery(aligned_overlapping, sim_overlap$z_true)
+
+cat("\nLatent-allocation recovery: clearly separated mixture\n")
+print(allocation_sep, row.names = FALSE)
+cat("\nLatent-allocation recovery: overlapping mixture\n")
+print(allocation_overlap, row.names = FALSE)
+
+
+# POSTERIOR DENSITIES AGAINST GENERATING VALUES
+#
+# These plots compare posterior uncertainty with the known data-generating
+# values. The means are ordered, and the mixture weight refers to the
+# lower-mean component after relabelling.
+
+plot_posterior_recovery <- function(draws, pars, main_prefix) {
+  true_values <- c(
+    mu_low = min(pars$mu1, pars$mu2),
+    mu_high = max(pars$mu1, pars$mu2),
+    pi_low = if (pars$mu1 <= pars$mu2) pars$pi else 1 - pars$pi,
+    sigma2 = pars$sigma^2
+  )
+  par(mfrow = c(2, 2))
+  for (v in names(true_values)) {
+    plot(density(draws[[v]]), main = paste(main_prefix, "-", v),
+         xlab = v, lwd = 2)
+    abline(v = true_values[[v]], lty = 2, lwd = 2)
+  }
+  par(mfrow = c(1, 1))
+}
+
+plot_posterior_recovery(draws_sep, scenario_separated,
+                        "Separated posterior")
+plot_posterior_recovery(draws_overlap, scenario_overlapping,
+                        "Overlapping posterior")
+
+
+# EXTENSION CHECK FOR ITERATION CHOICE
+
+# A practical check is to compare posterior summaries from the first and
+# second halves of the retained draws. Large differences suggest that the
+# chain may not yet be stable. This is a descriptive check and does not
+# replace multi-chain diagnostics. If diagnostics are unsatisfactory,
+# increase n_iter and repeat the analysis rather than relying on thinning.
+
+half_summary_difference <- function(draws) {
+  n <- nrow(draws)
+  first <- draws[seq_len(floor(n / 2)), , drop = FALSE]
+  second <- draws[(floor(n / 2) + 1):n, , drop = FALSE]
+  vars <- c("mu_low", "mu_high", "pi_low", "sigma2")
+  
+  result <- data.frame(
+    parameter = vars,
+    first_half_mean = vapply(vars, function(v) mean(first[[v]]), numeric(1)),
+    second_half_mean = vapply(vars, function(v) mean(second[[v]]), numeric(1))
+  )
+  result$absolute_difference <- abs(
+    result$first_half_mean - result$second_half_mean
+  )
+  result
+}
+stability_separated <- half_summary_difference(draws_sep)
+stability_overlapping <- half_summary_difference(draws_overlap)
+
+cat("\nHalf-run summary stability: clearly separated mixture\n")
+print(stability_separated, row.names = FALSE)
+cat("\nHalf-run summary stability: overlapping mixture\n")
+print(stability_overlapping, row.names = FALSE)
+
+# I assessed iteration adequacy using ESS, classical R-hat, trace plots,
+# and autocorrelation diagnostics.
+# For the separated mixture, I found R-hat values close to one, ESS above 10,000,
+# and stable trace plots, supporting the adequacy of 12,000 iterations per chain
+# with 4,000 burn-in iterations. For the overlapping mixture, I observed lower 
+# ESS, pronounced excursions, and irregular posterior distributions, indicating
+# less efficient sampling. I therefore concluded that R-hat alone was 
+# insufficient to confirm the adequacy of the same settings for the overlapping 
+# mixture.
+# Part B is complete.
 
 ############
 ## PART C ##

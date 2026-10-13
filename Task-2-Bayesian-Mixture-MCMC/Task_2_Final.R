@@ -895,7 +895,172 @@ print(stability_overlapping, row.names = FALSE)
 ## PART C ##
 ############
 
+# The mixture likelihood is invariant under
+# (mu1, mu2, pi) <-> (mu2, mu1, 1 - pi).
+# The sampler is not constrained to keep mu1 < mu2. I first inspect
+# the raw draws, then apply ordering as a post-processing step.
 
+# 1. Raw label-order diagnostics.
+# A change in the sign of mu1 - mu2 indicates that the component labels
+# exchanged their ordering between consecutive stored draws. The
+# proportion mu1 < mu2 describes the share of draws in each ordering.
+label_order_diagnostics <- function(chains, scenario_name) {
+  do.call(rbind, lapply(seq_along(chains), function(i) {
+    ch <- chains[[i]]
+    lower_first <- ch$mu1 < ch$mu2
+    data.frame(
+      scenario = scenario_name,
+      chain = names(chains)[i],
+      stored_draws = length(ch$mu1),
+      proportion_mu1_less_mu2 = mean(lower_first),
+      ordering_switches = sum(lower_first[-1] != lower_first[-length(lower_first)]),
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
+label_order_separated <- label_order_diagnostics(
+  chains_separated, "Clearly separated mixture"
+)
+label_order_overlapping <- label_order_diagnostics(
+  chains_overlapping, "Substantially overlapping mixture"
+)
+label_order_results <- rbind(label_order_separated, label_order_overlapping)
+cat("\nPART C: raw label-order diagnostics\n")
+print(label_order_results, row.names = FALSE)
+
+# 2. Plot the raw, unconstrained parameter traces for the overlapping case.
+# These plots are produced before any relabelling so that the label issue
+# is not concealed by post-processing.
+par(mfrow = c(3, 1), mar = c(3.5, 4, 2.5, 1))
+for (v in c("mu1", "mu2", "pi")) {
+  all_values <- unlist(lapply(chains_overlapping, function(ch) ch[[v]]))
+  plot(
+    chains_overlapping[[1]][[v]], type = "l",
+    ylim = range(all_values, finite = TRUE),
+    xlab = "Stored post-burn-in draw", ylab = v,
+    main = paste("Overlapping mixture: raw", v)
+  )
+  if (length(chains_overlapping) > 1) {
+    for (j in 2:length(chains_overlapping)) {
+      lines(chains_overlapping[[j]][[v]], col = j)
+    }
+    legend("topright", legend = names(chains_overlapping),
+           col = seq_along(chains_overlapping), lty = 1, bty = "n")
+  }
+}
+par(mfrow = c(1, 1))
+
+# 3. Raw posterior summaries. These are shown before relabelling to make
+# clear that mu1, mu2, and pi do not necessarily have stable component-
+# specific interpretations when labels exchange.
+raw_parameter_summary <- function(chains, scenario_name) {
+  draws <- do.call(rbind, lapply(chains, function(ch) {
+    data.frame(mu1 = ch$mu1, mu2 = ch$mu2, pi = ch$pi, sigma2 = ch$sigma2)
+  }))
+  summary <- t(vapply(names(draws), function(v) {
+    posterior_summary(draws[[v]])
+  }, numeric(5)))
+  data.frame(
+    scenario = scenario_name,
+    parameter = rownames(summary),
+    summary,
+    row.names = NULL,
+    check.names = FALSE
+  )
+}
+
+raw_summary_separated_C <- raw_parameter_summary(
+  chains_separated, "Clearly separated mixture"
+)
+raw_summary_overlapping_C <- raw_parameter_summary(
+  chains_overlapping, "Substantially overlapping mixture"
+)
+raw_summary_C <- rbind(raw_summary_separated_C, raw_summary_overlapping_C)
+cat("\nPART C: raw posterior summaries before relabelling\n")
+print(raw_summary_C, row.names = FALSE)
+
+# 4. Post-process each draw by ordering the component means. This is an
+# identifiability convention for interpretation, not a restriction placed
+# on the Gibbs sampler itself. When the means are swapped, pi and the
+# allocation labels are swapped consistently as well.
+relabel_chain_C <- function(ch) {
+  mu1_is_lower <- ch$mu1 <= ch$mu2
+  mu_low <- pmin(ch$mu1, ch$mu2)
+  mu_high <- pmax(ch$mu1, ch$mu2)
+  pi_low <- ifelse(mu1_is_lower, ch$pi, 1 - ch$pi)
+  z_ordered <- ch$z
+  switched_rows <- which(!mu1_is_lower)
+  if (length(switched_rows) > 0) {
+    z_ordered[switched_rows, ] <- 3L - z_ordered[switched_rows, , drop = FALSE]
+  }
+  list(mu_low = mu_low, mu_high = mu_high, pi_low = pi_low,
+       sigma2 = ch$sigma2, z_ordered = z_ordered)
+}
+
+summarise_relabelled_C <- function(chains, scenario_name) {
+  ordered_chains <- lapply(chains, relabel_chain_C)
+  combined <- do.call(rbind, lapply(ordered_chains, function(ch) {
+    data.frame(mu_low = ch$mu_low, mu_high = ch$mu_high,
+               pi_low = ch$pi_low, sigma2 = ch$sigma2)
+  }))
+  summary <- t(vapply(names(combined), function(v) {
+    posterior_summary(combined[[v]])
+  }, numeric(5)))
+  data.frame(
+    scenario = scenario_name,
+    parameter = rownames(summary),
+    summary,
+    row.names = NULL,
+    check.names = FALSE
+  )
+}
+
+relabelled_summary_separated_C <- summarise_relabelled_C(
+  chains_separated, "Clearly separated mixture"
+)
+relabelled_summary_overlapping_C <- summarise_relabelled_C(
+  chains_overlapping, "Substantially overlapping mixture"
+)
+relabelled_summary_C <- rbind(
+  relabelled_summary_separated_C,
+  relabelled_summary_overlapping_C
+)
+cat("\nPART C: posterior summaries after ordering mu_low < mu_high\n")
+print(relabelled_summary_C, row.names = FALSE)
+
+# 5. Label-invariant posterior quantities. The absolute component
+# separation and the mixture mean are unchanged by exchanging labels.
+label_invariant_summary_C <- function(chains, scenario_name) {
+  draws <- do.call(rbind, lapply(chains, function(ch) {
+    data.frame(
+      separation = abs(ch$mu1 - ch$mu2),
+      mixture_mean = ch$pi * ch$mu1 + (1 - ch$pi) * ch$mu2
+    )
+  }))
+  summary <- t(vapply(names(draws), function(v) {
+    posterior_summary(draws[[v]])
+  }, numeric(5)))
+  data.frame(
+    scenario = scenario_name,
+    quantity = rownames(summary),
+    summary,
+    row.names = NULL,
+    check.names = FALSE
+  )
+}
+
+invariant_separated_C <- label_invariant_summary_C(
+  chains_separated, "Clearly separated mixture"
+)
+invariant_overlapping_C <- label_invariant_summary_C(
+  chains_overlapping, "Substantially overlapping mixture"
+)
+label_invariant_C <- rbind(invariant_separated_C, invariant_overlapping_C)
+cat("\nPART C: label-invariant posterior quantities\n")
+print(label_invariant_C, row.names = FALSE)
+
+# Part C is still under review, and the overall assignment is not yet complete. 
 
 
 ############

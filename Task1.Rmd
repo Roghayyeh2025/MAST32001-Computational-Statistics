@@ -1,0 +1,58 @@
+---
+title: "Assignment_Solution_Q1_Hans"
+output: html_document
+date: "2026-10-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+*Task 1: Time series bootstrap and the ladle estimator*
+
+**part A**
+
+```{r}
+library(readr)
+x <- read_table("timeseries.dat.txt", 
+                             col_names = FALSE)
+x<- as.matrix(x)
+#View(x)
+#We find the mean of each variable
+mean_x <- apply(x, 2, mean)
+#We center data by removing the mean of each variable
+xc <- sweep(x,2, mean_x, "-")
+#We will now find the sample covariance matrix. with the sample correction(n-1)
+cov_xc <- cov(x)
+#We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
+#as the inverse is otherwise expensive. eigen decompose cov_xc = Q Lambda Q^T with Q being a vector and Lambda 
+#a diagnoal maxtrixx
+#we write true as covariance matrix is always symmetric
+e <- eigen(cov_xc, TRUE)
+#
+Lambda <- e$values
+Q <- e$vectors
+Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
+WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
+#Whitening data
+xw <- xc %*% WZCA
+#Since we no longer have the nice n-1 to remove bias from our autocorrelation, we will devide by n
+#We do up to 12 lags for autocorrelationo. We will just be subtracting the mean as the time series is fairly large
+apply(xw, 2, mean)
+cov(xw)
+# in the paper they test up to 12 lags
+taus <- 1:12 
+#array that contain the autocorrelations
+p <- ncol(xw)
+acm <- array(0,dim = c(p,p,length(taus)))
+#Since the data is whitenend whe should not devide by the covariance as it is the identity and since it is centered we should not subtract the mean when calculating the covariance as it is 0
+acfunc <- function(data, tau){
+  n <- nrow(xw)
+  1/n * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
+}
+for (k in seq_along(taus)){
+  acm[,,k] <- acfunc(xw,taus[k])
+}
+acm
+```
+

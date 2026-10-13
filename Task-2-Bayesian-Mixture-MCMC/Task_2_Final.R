@@ -816,29 +816,69 @@ plot_posterior_recovery(draws_overlap, scenario_overlapping,
 # replace multi-chain diagnostics. If diagnostics are unsatisfactory,
 # increase n_iter and repeat the analysis rather than relying on thinning.
 
-half_summary_difference <- function(draws) {
-  n <- nrow(draws)
-  first <- draws[seq_len(floor(n / 2)), , drop = FALSE]
-  second <- draws[(floor(n / 2) + 1):n, , drop = FALSE]
+
+# HALF-RUN STABILITY CHECK WITHIN EACH CHAIN
+
+# Compare the first and second halves of each chain separately.
+# Do not combine chains before splitting the retained draws.
+
+half_summary_difference <- function(aligned_chains) {
+  
   vars <- c("mu_low", "mu_high", "pi_low", "sigma2")
   
-  result <- data.frame(
-    parameter = vars,
-    first_half_mean = vapply(vars, function(v) mean(first[[v]]), numeric(1)),
-    second_half_mean = vapply(vars, function(v) mean(second[[v]]), numeric(1))
-  )
-  result$absolute_difference <- abs(
-    result$first_half_mean - result$second_half_mean
-  )
-  result
+  results <- lapply(seq_along(aligned_chains), function(ch_id) {
+    
+    ch <- aligned_chains[[ch_id]]
+    n <- length(ch$mu_low)
+    
+    if (n < 2) {
+      stop("Each chain must contain at least two retained draws.")
+    }
+    
+    half_n <- floor(n / 2)
+    
+    first_idx <- seq_len(half_n)
+    second_idx <- seq.int(half_n + 1, n)
+    
+    first <- lapply(vars, function(v) {
+      mean(ch[[v]][first_idx])
+    })
+    
+    second <- lapply(vars, function(v) {
+      mean(ch[[v]][second_idx])
+    })
+    
+    first <- unlist(first)
+    second <- unlist(second)
+    
+    data.frame(
+      chain = names(aligned_chains)[ch_id],
+      parameter = vars,
+      first_half_mean = unname(first),
+      second_half_mean = unname(second),
+      absolute_difference = abs(first - second)
+    )
+  })
+  
+  do.call(rbind, results)
 }
-stability_separated <- half_summary_difference(draws_sep)
-stability_overlapping <- half_summary_difference(draws_overlap)
 
-cat("\nHalf-run summary stability: clearly separated mixture\n")
+# Apply the check separately to each simulation scenario.
+stability_separated <- half_summary_difference(aligned_separated)
+stability_overlapping <- half_summary_difference(aligned_overlapping)
+
+cat("\nHalf-run stability: clearly separated mixture\n")
 print(stability_separated, row.names = FALSE)
-cat("\nHalf-run summary stability: overlapping mixture\n")
+
+cat("\nHalf-run stability: overlapping mixture\n")
 print(stability_overlapping, row.names = FALSE)
+
+
+
+
+
+
+
 
 # I assessed iteration adequacy using ESS, classical R-hat, trace plots,
 # and autocorrelation diagnostics.

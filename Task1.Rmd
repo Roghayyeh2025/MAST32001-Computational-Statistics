@@ -23,10 +23,10 @@ mean_x <- apply(x, 2, mean)
 #We center data by removing the mean of each variable
 xc <- sweep(x,2, mean_x, "-")
 #We will now find the sample covariance matrix. with the sample correction(n-1)
-cov_xc <- cov(x)
+cov_xc <- cov(xc)
 #We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
-#as the inverse is otherwise expensive. eigen decompose cov_xc = Q Lambda Q^T with Q being a vector and Lambda 
-#a diagnoal maxtrixx
+#as the inverse is otherwise expensive. eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
+#a diagnoal maxtrix
 #we write true as covariance matrix is always symmetric
 e <- eigen(cov_xc, TRUE)
 #
@@ -36,8 +36,8 @@ Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
 WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
 #Whitening data
 xw <- xc %*% WZCA
-#Since we no longer have the nice n-1 to remove bias from our autocorrelation, we will devide by n
-#We do up to 12 lags for autocorrelationo. We will just be subtracting the mean as the time series is fairly large
+#Since we no longer have the nice n-1 to remove bias from our autocorrelation, we will devide by n as the time series is fairly large
+#We do up to 12 lags for autocorrelationon
 apply(xw, 2, mean)
 cov(xw)
 # in the paper they test up to 12 lags
@@ -47,7 +47,7 @@ p <- ncol(xw)
 acm <- array(0,dim = c(p,p,length(taus)))
 #Since the data is whitenend whe should not devide by the covariance as it is the identity and since it is centered we should not subtract the mean when calculating the covariance as it is 0
 acfunc <- function(data, tau){
-  n <- nrow(xw)
+  n <- nrow(data)
   1/n * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
 }
 for (k in seq_along(taus)){
@@ -55,4 +55,141 @@ for (k in seq_along(taus)){
 }
 acm
 ```
+
+**Part B**
+
+```{r}
+#First think ob B_ib as a block consisting og b observations from x starting from X_i. In the case where j > N i = j(mod N) and X_0 = X_N. Hence we look at data as being circular. 
+#fix a number p in 0 to 1
+#Make a sequence of iid random variables L independent of X. With prob of L_i = m bing 1 − p)^(m−1) · p for m = 1,2...
+#Independent of X_i and L_1 make I_1,I_2,... seq of iid var with discrete uniform dist on {1,..,N}
+#We now generate X_1*,...,X_N*. The first block is B_{I_1,L_1} such that X*_1 = X_{I1},... X*_{L_1} = X_{I_1 + #L_1-1} and the pseudo-time series finish once we have N observations. Thereafter we compute T_N(X*) or R_N(X*;T_n)
+#Here the conditional dist of R_n given X is the stationary bootstrap approximation to the true sampling dist of R_N(X,mu)
+#For the code first define the idx using above information about I and L, then we can pull the index right out of x
+# For the fixed bootstrap the length of a block is the tuning param, and for stationary bootstrap the probablity p is the tuning param. 
+
+fixed_boot <- function(x, L){
+  j <- 0
+  N <- nrow(x)
+  idx <- integer(N)
+  while(j < N){
+    #I can only drawn from 1 to N-L otherwise it will end up being circular as from the stationary boot
+    I <- sample.int(N-L + 1, 1)
+    if (j + L > N){
+      #We remove any part of the block that make the sample size go beyond N
+      L <- N - j
+    }
+    idx[(j+1):(j+L)] <- I:(I + L-1)
+    j <- j + L
+  }
+    x[idx,, drop = FALSE ]
+}
+
+stationary_boot <- function(x, prob){
+  j <- 0
+  N <- nrow(x)
+  idx <- integer(N)
+  while(j < N){
+    #Since rgeom counts number of failures before a succes, we add 1
+    L <- rgeom(1, prob) + 1
+    I <- sample.int(N, 1)
+    if (j + L > N){
+      #We remove any part of the block that make the sample size go beyond N
+      L <- N - j
+    }
+    idx_LI <- I:(I + L-1)
+    #ensure that we act as if data is circular
+    idx[(j+1):(j+L)] <- ((idx_LI - 1) %% N) + 1
+    j <- j + L
+  }
+    x[idx,, drop = FALSE ]
+}
+```
+
+```{r}
+set.seed(20260812)
+B <- 500
+# param will reprent the fixed lengths, and then 1/param pased through stationary boot will end up giving the expected block length of b. Note that param = 1 is equivalent to an iid resample
+param <- c(1,2,5,10,20,50)
+one_summary_param_choice <- function(b){
+stationary <- replicate(B, {
+  xs <- stationary_boot(xw,1/b)
+  c(apply(xs,2,mean), diag(acfunc(xs, 1)))
+})
+fixed <- replicate(B, {
+  xs <- fixed_boot(xw,b)  
+  c(apply(xs,2,mean), diag(acfunc(xs, 1)))
+})
+data.frame(
+    b              = b,
+    variable       = 1:p,
+    stationary_se  = apply(stationary[1:p, ], 1, sd),
+    fixed_se       = apply(fixed[1:p, ], 1, sd),
+    stationary_ACF = rowMeans(stationary[(p + 1):(2 * p), ]),
+    fixed_ACF      = rowMeans(fixed[(p + 1):(2 * p), ])
+  )
+}
+results <- do.call(rbind, lapply(param, one_summary_param_choice))
+results
+```
+
+```{r}
+# ACF of every column at the lags in taus: a p x length(taus)
+# I am unsure if I should whiten the boottrapped data again as this will maybe no longer be a correlation
+acf_diag <- function(data, taus) {
+  sapply(taus, function(tau) diag(acfunc(data, tau)))
+}
+
+set.seed(20260812)
+b <- 20
+taus <- 1:12
+
+#make the bootstraps
+one_iid <- stationary_boot(xw, 1)
+one_fixed<- fixed_boot(xw, b)
+one_stationary <- stationary_boot(xw, 1/b)
+
+#cteate the acf 
+acf_orig<- acf_diag(xw, taus)
+acf_iid <- acf_diag(one_iid, taus)
+acf_fixed<- acf_diag(one_fixed, taus)
+acf_stationary <- acf_diag(one_stationary, taus)
+
+# One panel per variable, 2 rows of 5
+op <- par(mfrow = c(2, 5), mar = c(4, 4, 2, 1))
+ylim <- range(acf_orig, acf_iid, acf_fixed, acf_stationary)
+for (j in 1:p) {
+  plot(taus, acf_orig[j, ], type = "b", pch = 16, ylim = ylim,
+       xlab = "Lag", ylab = "ACF", main = paste("Variable", j))
+  lines(taus, acf_fixed[j, ],type = "b", pch = 1, col = "blue")
+  lines(taus, acf_stationary[j, ], type = "b", pch = 2, col = "red")
+  lines(taus, acf_iid[j, ],type = "b", pch = 4, col = "grey")
+  abline(h = 0, lty = 2)
+}
+legend("topright", legend = c("original", "fixed", "stationary", "iid"),
+       col = c("black", "blue", "red", "grey"), pch = c(16, 1, 2, 4), bty = "n")
+par(op)
+diag(acfunc(xw, 1))
+```
+```{r}
+# Realize that above plot is a bit hard to read so i will select some varibales.
+# pick out variables 9,1,10 based on a high acf of one lag from the orignial data
+vars <- c(9, 1, 10)
+op <- par(mfrow = c(1, length(vars)), mar = c(4, 4, 2, 1))
+ylim <- range(acf_orig[vars, ], acf_iid[vars, ], acf_fixed[vars, ], acf_stationary[vars, ])
+for (j in vars) {
+  plot(taus, acf_orig[j, ], type = "b", pch = 16, ylim = ylim,
+       xlab = "Lag", ylab = "ACF", main = paste("Variable", j))
+  lines(taus, acf_fixed[j, ], type = "b", pch = 1, col = "blue")
+  lines(taus, acf_stationary[j, ], type = "b", pch = 2, col = "red")
+  lines(taus,acf_iid[j, ], type = "b", pch = 4, col = "grey")
+  abline(h = 0, lty = 2)
+}
+legend("topright", legend = c("original", "fixed", "stationary", "iid"),
+       col = c("black", "blue", "red", "grey"), pch = c(16, 1, 2, 4), bty = "n")
+par(op)
+```
+Looking at the ACF both the fixed and stationary bootstraps are able to keep the local dependence, while it is clear for ie variable 9 that the iid resampling does not keep any of the dependency.
+
+**Part C**
 

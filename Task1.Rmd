@@ -24,14 +24,12 @@ mean_x <- apply(x, 2, mean)
 xc <- sweep(x,2, mean_x, "-")
 #We will now find the sample covariance matrix. with the sample correction(n-1)
 cov_xc <- cov(xc)
-#We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
-# Eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
-#a diagnoal maxtrix
-#we write true as covariance matrix is always symmetric
-e <- eigen(cov_xc, TRUE)
-#
-Lambda <- e$values
-Q <- e$vectors
+#We follow the paper and whiten using symmetric square root. #We will use svd to decompose the matrix
+#SVD decompose cov_xc = U D V^T. Since cov_xc is symmetric and positive definite, U = V = Q is an orthogonal matrix of eigenvectors and D = Lambda
+#is a diagonal matrix
+s <- svd(cov_xc)
+Lambda <- s$d
+Q <- s$u
 Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
 WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
 #Whitening data
@@ -119,14 +117,12 @@ Get_white <- function(x){
 xc <- sweep(x,2, mean_x, "-")
 #We will now find the sample covariance matrix. with the sample correction(n-1)
 cov_xc <- cov(xc)
-#We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
-#Eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
-#a diagnoal maxtrix
-#we write true as covariance matrix is always symmetric
-e <- eigen(cov_xc, TRUE)
-#
-Lambda <- e$values
-Q <- e$vectors
+#We follow the paper and whiten using symmetric square root. #We will use svd to decompose the matrix
+#SVD decompose cov_xc = U D V^T. Since cov_xc is symmetric and positive definite, U = V = Q is an orthogonal matrix of eigenvectors and D = Lambda
+#is a diagonal matrix
+s <- svd(cov_xc)
+Lambda <- s$d
+Q <- s$u
 Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
 WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
 #Whitening data
@@ -228,7 +224,7 @@ Looking at the ACF both the fixed and stationary bootstraps are able to keep the
 library(JADE)
 #We use simplify = "array" such that sapply returns a pxpxK matrix. We increase maxiter to get convergence
 acf_rjd <- function(data, taus) {
-  rjd(sapply(taus, function(tau) acfunc(data, tau), simplify = "array"), maxiter = 1000)
+  rjd(sapply(taus, function(tau) acfunc(data, tau), simplify = "array"), eps = 1e-5, maxiter = 1500)
 }
 
 Get_U <- function(xw, Taus){
@@ -255,23 +251,24 @@ dim(res$U)
 # 3 values being clearly larger then the other
 res$Lambda
 
-f_replicate <- function(x, U_org, Taus,b){
+f_replicate <- function(x, U_org, Taus,b, stationary = TRUE){
   p <- ncol(U_org)
-  #We use stationary bootstrap
-  xs <- stationary_boot(x,1/b)
+  #We do either fixed or stationary (default) bootstrap
+  xs <- if (stationary) stationary_boot(x, 1/b) else fixed_boot(x, b)
   xws <- Get_white(xs)
   #We find U from one bootstrap sample
   U_star <- Get_U(xws,Taus)$U
   sapply(1:(p - 1), function(k) {
+    #Drop false keeps the structure of the matrix
     B_hat <- U_org[,1:k, drop = FALSE]
     B_star <- U_star[,1:k, drop = FALSE]
     1 - abs(det(crossprod(B_hat,B_star)))})
 }
 
-f_k_func <- function(x,U,Taus,b,B){
+f_k_func <- function(x,U,Taus,b,B, stationary = TRUE){
   #we first get all the det for the sum over all bootstrap samples, by replicating B 1 - abs(det)
   f <- replicate(B, {
-  f_replicate(x, U, Taus,b)
+  f_replicate(x, U, Taus,b, stationary)
   })
   #We then sum over the det and and 0 as the first value
   f_0 <- c(0, rowMeans(f))
@@ -280,12 +277,12 @@ f_k_func <- function(x,U,Taus,b,B){
   f_k <- f_0 / (1 + f_0_sum)
   f_k
 }
-g <- function(x, Taus,b,B){
+g <- function(x, Taus,b,B, stationary = TRUE){
   #Get U and lambda from the original sample
   xw <- Get_white(x)
   res_org <- Get_U(xw, Taus)
   #find f
-  f_k <- f_k_func(x, res_org$U,Taus,b,B)
+  f_k <- f_k_func(x, res_org$U,Taus,b,B, stationary)
   lambda <- res_org$Lambda
   #find phi
   phi <- lambda / (1 + sum(lambda))
@@ -298,5 +295,114 @@ B<- 500
 taus <- 1:12
 g(x,taus,b,B)
 #q_hat = 3 agrees with the orignial data, which had a large drop in U after first 3 values
+```
+
+**Part D**
+First we will try to recreate the resuls from figure 1
+
+```{r}
+#p = 10, q = 5 ARMA signals with Gaussian innovations and 5 Gaussian white noise series
+sim_setting1 <- function(n, Omega = diag(10)){
+  z <- cbind(
+    arima.sim(list(ar =0.6,ma =c(0, -0.4)), n),
+    arima.sim(list(ar = c(0.4,0.1, 0.3), ma = c(0.2, 0.4)), n),
+    arima.sim(list(ar = 0.4),n),
+    arima.sim(list(ma = c(0.5,0.3, 0.1, 0.2)), n),
+    arima.sim(list(ar = c(0.1, 0.1,0.3)), n),
+    matrix(rnorm(5 * n), n,5)
+  )
+  #Mix the sources, x_t = Omega z_t, written with time points as rows
+  x <- z%*% t(Omega)
+  list(x = x, z = z)
+}
+#Plot for stationary boot
+set.seed(1)
+sim <- sim_setting1(1000)
+lad <- g(sim$x, 1:12, 20, 200)
+
+k <- 0:9
+# title suggesteion "Ladle plot, Setting 1, n = 1000, stationary bootstrap (b = 20)"
+plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad$f, type = "l", col = "black")
+lines(k, lad$phi, type = "l", col = "red")
+legend("topright", legend = c("f", expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+lad$q_hat
+```
+```{r}
+#plot for fixed
+set.seed(1)
+sim <- sim_setting1(1000)
+lad <- g(sim$x, 1:12, 20, 200, FALSE)
+
+k <- 0:9
+# title sugestion "Ladle plot, Setting 1, n = 1000, fixed bootstrap (b = 20)"
+plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad$f, type = "l", col = "black")
+lines(k, lad$phi, type = "l", col = "red")
+legend("topright", legend = c("f",expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+lad$q_hat
+```
+Both plots look similar, and have the same conclution. They are also in agreement with the result of figure one from the article
+
+```{r}
+set.seed(20)
+#Amount of independent datasets we will simualte for each time series (paper uses 2000)
+R <- 100
+#Amount of bootsrap samples within each ladle
+B <- 100
+#n is the length of the simulated series. The guess is that a longer series will improve the result
+ns <-c(200, 500, 1000,1500)
+#Length of block or expected length of block depending on bootstrap method
+bs <- c(5,10, 20, 30)
+results <- data.frame()
+for (n in ns) {
+  for (r in 1:R) {
+  #Simulate data of length n. When we are making a new simulation instead always bootstraping from the same simulation we are removing the chance of the dataset lucky/unlucky for getting the correct value of 5. Hence this actually tells about the methods real performance of data with this type of distribution. I want to discuss with Andrea wether this is a hard data to replicate
+  x <- sim_setting1(n)$x
+    for (b in bs) {
+      #boptstrap with both fixed and stationary and extract q
+      q_F <- g(x, 1:12, b,B, FALSE)$q_hat
+      q_S <- g(x, 1:12, b, B)$q_hat
+      results <-rbind(results, data.frame(n = n, method = c("F", "S"), b = b, q_hat = c(q_F, q_S)))
+    }
+  }
+}
+
+```
+```{r}
+summary_q <- data.frame()
+mcse_q <- data.frame()
+for(n in ns){
+  for( m in c("F", "S")){
+    for(b in bs){
+      #Find q for the combination of sample size, method and block length
+      q <- results$q_hat[results$n == n & results$method == m & results$b == b]
+      counts <- numeric(10)
+      #summary
+      #count how many q's fell into each possible outcome
+      for(i in 1:10){
+        counts[i] <-sum(q == (i-1))
+      }
+      #Converge to percentage (not nessary for R = 100)
+      perc <- 100 * counts /length(q)
+      summary_q <- rbind(summary_q, data.frame(n = n, method = m, b = b, t(perc)))
+      #MCSE we know the true value is 5
+      I <- q == 5
+      #How many q turn out to be the true mean
+      p_hat <- mean(I)
+      R <- length(q)
+      mcse <- sd(I) / sqrt(R)
+      mcse_q <- rbind(mcse_q, data.frame(n =n, method =m, b = b,p = p_hat, MCSE = mcse, lower_bound = p_hat - 1.96 * mcse, upper_bound =p_hat + 1.96 * mcse ))
+    }
+  }
+}
+colnames(summary_q) <- c("n", "method", "b", paste0("q=", 0:9))
+summary_q
+#Not sure yet if it makes sense to include the MCSE
+mcse_q
 ```
 

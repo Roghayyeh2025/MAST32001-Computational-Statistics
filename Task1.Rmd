@@ -25,7 +25,7 @@ xc <- sweep(x,2, mean_x, "-")
 #We will now find the sample covariance matrix. with the sample correction(n-1)
 cov_xc <- cov(xc)
 #We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
-#as the inverse is otherwise expensive. eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
+# Eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
 #a diagnoal maxtrix
 #we write true as covariance matrix is always symmetric
 e <- eigen(cov_xc, TRUE)
@@ -36,7 +36,7 @@ Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
 WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
 #Whitening data
 xw <- xc %*% WZCA
-#Since we no longer have the nice n-1 to remove bias from our autocorrelation, we will devide by n as the time series is fairly large
+#we will devide by n-tau
 #We do up to 12 lags for autocorrelationon
 apply(xw, 2, mean)
 cov(xw)
@@ -48,12 +48,17 @@ acm <- array(0,dim = c(p,p,length(taus)))
 #Since the data is whitenend whe should not devide by the covariance as it is the identity and since it is centered we should not subtract the mean when calculating the covariance as it is 0
 acfunc <- function(data, tau){
   n <- nrow(data)
-  1/n * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
+  #Check for centered data.
+  if (max(abs(colMeans(data))) > 1e-8) warning("data does not look centered: largest column mean is ", signif(max(abs(colMeans(data))), 3))
+  M <- 1/(n-tau) * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
+  #Symmetrize, since the lagged matrix is not symmetric and rjd() assumes symmetric input
+  (M + t(M)) / 2
 }
 for (k in seq_along(taus)){
   acm[,,k] <- acfunc(xw,taus[k])
 }
 acm
+isSymmetric(acfunc(xw, 1))
 ```
 
 **Part B**
@@ -109,24 +114,50 @@ stationary_boot <- function(x, prob){
 ```{r}
 set.seed(20260812)
 B <- 500
+Get_white <- function(x){
+  mean_x <- apply(x, 2, mean)
+xc <- sweep(x,2, mean_x, "-")
+#We will now find the sample covariance matrix. with the sample correction(n-1)
+cov_xc <- cov(xc)
+#We follow the paper and whiten using symmetric square root. We will use eigen to decomposite the matrix
+#Eigen decompose cov_xc = Q Lambda Q^T with Q being an Orthogonal matrix of eigenvectors and Lambda 
+#a diagnoal maxtrix
+#we write true as covariance matrix is always symmetric
+e <- eigen(cov_xc, TRUE)
+#
+Lambda <- e$values
+Q <- e$vectors
+Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
+WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
+#Whitening data
+xw <- xc %*% WZCA
+#Check that the whitened data has identity covariance
+err <- max(abs(cov(xw) - diag(ncol(x))))
+if (err > 1e-8) stop("Whitening failed", signif(err, 3))
+xw
+}
 # param will reprent the fixed lengths, and then 1/param pased through stationary boot will end up giving the expected block length of b. Note that param = 1 is equivalent to an iid resample
 param <- c(1,2,5,10,20,50)
 one_summary_param_choice <- function(b){
+#replicate 500 stationary_boot with 1/b
 stationary <- replicate(B, {
-  xs <- stationary_boot(xw,1/b)
-  c(apply(xs,2,mean), diag(acfunc(xs, 1)))
+  xs <- stationary_boot(x,1/b)
+  xw <- Get_white(xs)
+  c(apply(xw,2,mean), diag(acfunc(xw, 1)))
 })
+#replicate 500 fixed_boot with b
 fixed <- replicate(B, {
-  xs <- fixed_boot(xw,b)  
-  c(apply(xs,2,mean), diag(acfunc(xs, 1)))
+  xs <- fixed_boot(x,b)  
+  xw <- Get_white(xs)
+  c(apply(xw,2,mean), diag(acfunc(xw, 1)))
 })
 data.frame(
-    b              = b,
-    variable       = 1:p,
+    b = b,
+    variable= 1:p,
     stationary_se  = apply(stationary[1:p, ], 1, sd),
-    fixed_se       = apply(fixed[1:p, ], 1, sd),
+    fixed_se= apply(fixed[1:p, ], 1, sd),
     stationary_ACF = rowMeans(stationary[(p + 1):(2 * p), ]),
-    fixed_ACF      = rowMeans(fixed[(p + 1):(2 * p), ])
+    fixed_ACF = rowMeans(fixed[(p + 1):(2 * p), ])
   )
 }
 results <- do.call(rbind, lapply(param, one_summary_param_choice))
@@ -135,7 +166,7 @@ results
 
 ```{r}
 # ACF of every column at the lags in taus: a p x length(taus)
-# I am unsure if I should whiten the boottrapped data again as this will maybe no longer be a correlation
+# We bootstrap from the orignal unwhitend and uncentered data and then we center and whiten
 acf_diag <- function(data, taus) {
   sapply(taus, function(tau) diag(acfunc(data, tau)))
 }
@@ -145,9 +176,9 @@ b <- 20
 taus <- 1:12
 
 #make the bootstraps
-one_iid <- stationary_boot(xw, 1)
-one_fixed<- fixed_boot(xw, b)
-one_stationary <- stationary_boot(xw, 1/b)
+one_iid <- Get_white(stationary_boot(x, 1))
+one_fixed<- Get_white(fixed_boot(x, b))
+one_stationary <- Get_white(stationary_boot(x, 1/b))
 
 #cteate the acf 
 acf_orig<- acf_diag(xw, taus)
@@ -192,4 +223,80 @@ par(op)
 Looking at the ACF both the fixed and stationary bootstraps are able to keep the local dependence, while it is clear for ie variable 9 that the iid resampling does not keep any of the dependency.
 
 **Part C**
+
+```{r}
+library(JADE)
+#We use simplify = "array" such that sapply returns a pxpxK matrix. We increase maxiter to get convergence
+acf_rjd <- function(data, taus) {
+  rjd(sapply(taus, function(tau) acfunc(data, tau), simplify = "array"), maxiter = 1000)
+}
+
+Get_U <- function(xw, Taus){
+#We do the joint diagonilzation on the whitend data, which returns the diagnolizer U and the approximate diagonalized AC 
+rjd <- acf_rjd(xw,Taus)
+U <- rjd$V
+#Check that U is orthogonal, so that 0 <= det <= 1 in f. We stop as this is a major issue
+err_U <- max(abs(crossprod(U) - diag(ncol(U))))
+if (err_U > 1e-8) stop("U is not orthogonal ", signif(err_U, 3))
+# We pull out the diagonals of each AC to get a p x length(Taus) matrix
+d <- apply(rjd$D,3, diag)
+#We then sum over the lag set to optain the diagnoal matrix. Idea is to sum all lags^2 for each variable, the result is a vector
+lambda_diag <- rowSums(d^2) 
+#We then order the diagonal from largest to smallest and U such that it match lambda_diag
+ord <- order(lambda_diag, decreasing = TRUE)
+U_ord <- U[,ord]
+lambda_diag_ord <- lambda_diag[ord]
+list(U =U_ord, Lambda = lambda_diag_ord)
+}
+res <- Get_U(xw,1:12)
+#We have a 10x10 matrix which matches our expectations
+dim(res$U)
+#Lambda is a vector with 10 elements and it is strictly decreasing which is what we wanted and with the first
+# 3 values being clearly larger then the other
+res$Lambda
+
+f_replicate <- function(x, U_org, Taus,b){
+  p <- ncol(U_org)
+  #We use stationary bootstrap
+  xs <- stationary_boot(x,1/b)
+  xws <- Get_white(xs)
+  #We find U from one bootstrap sample
+  U_star <- Get_U(xws,Taus)$U
+  sapply(1:(p - 1), function(k) {
+    B_hat <- U_org[,1:k, drop = FALSE]
+    B_star <- U_star[,1:k, drop = FALSE]
+    1 - abs(det(crossprod(B_hat,B_star)))})
+}
+
+f_k_func <- function(x,U,Taus,b,B){
+  #we first get all the det for the sum over all bootstrap samples, by replicating B 1 - abs(det)
+  f <- replicate(B, {
+  f_replicate(x, U, Taus,b)
+  })
+  #We then sum over the det and and 0 as the first value
+  f_0 <- c(0, rowMeans(f))
+  f_0_sum <- sum(f_0)
+  #We then get the vector of all the normalized f_k values
+  f_k <- f_0 / (1 + f_0_sum)
+  f_k
+}
+g <- function(x, Taus,b,B){
+  #Get U and lambda from the original sample
+  xw <- Get_white(x)
+  res_org <- Get_U(xw, Taus)
+  #find f
+  f_k <- f_k_func(x, res_org$U,Taus,b,B)
+  lambda <- res_org$Lambda
+  #find phi
+  phi <- lambda / (1 + sum(lambda))
+  #find g
+  g_k <- f_k + phi
+  list(f = f_k, phi = phi, g = g_k, q_hat = which.min(g_k) - 1)
+}
+b <- 20
+B<- 500
+taus <- 1:12
+g(x,taus,b,B)
+#q_hat = 3 agrees with the orignial data, which had a large drop in U after first 3 values
+```
 

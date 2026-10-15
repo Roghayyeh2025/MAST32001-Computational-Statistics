@@ -1060,7 +1060,6 @@ label_invariant_C <- rbind(invariant_separated_C, invariant_overlapping_C)
 cat("\nPART C: label-invariant posterior quantities\n")
 print(label_invariant_C, row.names = FALSE)
 
-# Part C is still under review, and the overall assignment is not yet complete. 
 
 
 ############

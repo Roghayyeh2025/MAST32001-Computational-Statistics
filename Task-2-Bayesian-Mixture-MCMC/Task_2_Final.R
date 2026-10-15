@@ -1094,7 +1094,6 @@ init_D <- list(
   sigma2 = 1,
   z = sample(1:2, length(y_std_D), replace = TRUE)
 )
-
 # Fit the two-component Gaussian mixture to the standardised data.
 set.seed(4102)
 draws_D <- gibbs_mix(

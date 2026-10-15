@@ -1069,4 +1069,45 @@ print(label_invariant_C, row.names = FALSE)
 data(faithful)
 y <- faithful$eruptions
 
+#Visualise the observed distribution before fitting the mixture model.
 
+hist(
+  y,
+  breaks = 20,
+  probability = TRUE,
+  main = "Old Faithful eruption durations",
+  xlab = "Eruption duration (minutes)"
+)
+
+# Standardise the eruption durations using the helper from Part A.
+# This can make prior specification and MCMC computation easier.
+y_info_D <- standardise_data(y)
+y_std_D <- y_info_D$y_std
+
+# Set reproducible initial values for the Gibbs sampler.
+set.seed(4101)
+
+init_D <- list(
+  mu1 = -0.8,
+  mu2 = 0.8,
+  pi = 0.5,
+  sigma2 = 1,
+  z = sample(1:2, length(y_std_D), replace = TRUE)
+)
+
+# Fit the two-component Gaussian mixture to the standardised data.
+set.seed(4102)
+draws_D <- gibbs_mix(
+  y = y_std_D,
+  n_iter = 12000,
+  burn = 4000,
+  thin = 2,
+  init = init_D,
+  m0 = m0,
+  s0_sq = s0_sq,
+  a = a,
+  b = b,
+  alpha0 = alpha0,
+  beta0 = beta0,
+  seed = 4102
+)

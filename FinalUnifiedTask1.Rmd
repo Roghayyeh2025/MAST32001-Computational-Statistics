@@ -1,0 +1,641 @@
+---
+title: "Combined code Task1"
+output: html_document
+date: "2026-10-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+*Task 1: Time series bootstrap and the ladle estimator*
+```{r}
+setting1=function(nobs){
+  x1=arima.sim(model = list(ar=0.6, ma=c(0,-0.4)), n=nobs)
+  #but the paper tells us that in the SOS model E(z_t)=0 and Cov(z_t)=I. For every variable x1,...,x5 we already
+  #have E(x)=0 and cov between every x =0, but we need V(x)=1.We use the theoretical variance
+  var1=sum(c(1,ARMAtoMA(ar=0.6,ma=c(0,-0.4),lag.max = 1000))^2)
+  x1=x1/sqrt(var1)
+  x2=arima.sim(model = list(ar=c(0.4,0.1,0.3), ma=c(0.2,0.4)), n=nobs)
+  var2=sum(c(1,ARMAtoMA(ar=c(0.4,0.1,0.3),ma=c(0.2,0.4),lag.max = 1000))^2)
+  x2=x2/sqrt(var2)
+  x3=arima.sim(model = list(ar=0.4), n=nobs)
+  var3=1/(1-0.4^2)
+  x3=x3/sqrt(var3)
+  x4=arima.sim(model = list(ma=c(0.5,0.3,0.1,0.2)), n=nobs)
+  var4=1+sum(c(0.5,0.3,0.1,0.2)^2)
+  x4=x4/sqrt(var4)
+  x5=arima.sim(model = list(ar=c(0.1,0.1,0.3)), n=nobs)
+  var5=sum(c(1,ARMAtoMA(ar=c(0.1,0.1,0.3),lag.max = 1000))^2)
+  x5=x5/sqrt(var5)
+  x6=rnorm(nobs)
+  x7=rnorm(nobs)
+  x8=rnorm(nobs)
+  x9=rnorm(nobs)
+  x10=rnorm(nobs)
+  setting1=cbind(x1,x2,x3,x4,x5,x6,x7,x8,x9,x10)
+  setting1
+}
+set.seed(123)
+x <- setting1(1000)
+```
+
+
+**part A**
+
+```{r}
+library(readr)
+#View(x)
+#We find the mean of each variable
+mean_x <- apply(x, 2, mean)
+#We center data by removing the mean of each variable
+xc <- sweep(x,2, mean_x, "-")
+#We will now find the sample covariance matrix. with the sample correction(n-1)
+cov_xc <- cov(xc)
+#We follow the paper and whiten using symmetric square root. #We will use svd to decompose the matrix
+#SVD decompose cov_xc = U D V^T. Since cov_xc is symmetric and positive definite, U = V = Q is an orthogonal matrix of eigenvectors and D = Lambda
+#is a diagonal matrix
+s <- svd(cov_xc)
+Lambda <- s$d
+Q <- s$u
+Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
+Lambda_inv_sqrt
+WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
+WZCA
+#Whitening data
+xw <- xc %*% WZCA
+#we will devide by n-tau
+#We do up to 12 lags for autocorrelationon
+apply(xw, 2, mean)
+cov(xw)
+# in the paper they test up to 12 lags
+taus <- 1:12 
+#array that contain the autocorrelations
+p <- ncol(xw)
+acm <- array(0,dim = c(p,p,length(taus)))
+#Since the data is whitenend whe should not devide by the covariance as it is the identity and since it is centered we should not subtract the mean when calculating the covariance as it is 0
+autoc <- function(data, tau){
+n <- nrow(data)
+1/(n-tau) * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
+}
+for (k in seq_along(taus)){
+  acm[,,k] <- autoc(xw,taus[k])
+}
+isSymmetric(autoc(xw, 1))
+```
+
+**Part B**
+
+```{r}
+#First think ob B_ib as a block consisting og b observations from x starting from X_i. In the case where j > N i = j(mod N) and X_0 = X_N. Hence we look at data as being circular. 
+#fix a number p in 0 to 1
+#Make a sequence of iid random variables L independent of X. With prob of L_i = m bing 1 − p)^(m−1) · p for m = 1,2...
+#Independent of X_i and L_1 make I_1,I_2,... seq of iid var with discrete uniform dist on {1,..,N}
+#We now generate X_1*,...,X_N*. The first block is B_{I_1,L_1} such that X*_1 = X_{I1},... X*_{L_1} = X_{I_1 + #L_1-1} and the pseudo-time series finish once we have N observations. Thereafter we compute T_N(X*) or R_N(X*;T_n)
+#Here the conditional dist of R_n given X is the stationary bootstrap approximation to the true sampling dist of R_N(X,mu)
+#For the code first define the idx using above information about I and L, then we can pull the index right out of x
+# For the fixed bootstrap the length of a block is the tuning param, and for stationary bootstrap the probablity p is the tuning param. 
+
+
+
+fixed_boot <- function(x,l){
+  n=nrow(x)
+  nvar=ncol(x)
+  m=ceiling(n/l) #for example if we have n=105 and l=20 it gives m=6
+  block=matrix(rep(0,m*l*nvar), nrow =m*l )#so that we can sample whole blocks
+  j=1
+  for (i in 1:m) {
+    star=sample(1:(n-l+1), size=1) 
+    block[j:(j+l-1),]=x[star:(star+(l-1)),]
+    j=j+l
+  }
+  block[1:n, ]#we just want the first n observations (that can be less than m*l)
+}
+
+stationary_boot <- function(x,prob){
+  n=nrow(x)
+  nvar=ncol(x)
+  stationary=matrix(rep(0,n*nvar), nrow =n )
+  x2=matrix(rep(0,n*nvar*2), nrow=n*2)
+  x2[1:n,]=x
+  x2[(n+1):(2*n),]=x
+  star=sample(1:n, size=1)
+  stationary[1,]=x2[star,]
+  for (i in 2:n) {
+    if (runif(1)>=prob) {
+      star=star+1
+      stationary[i,]=x2[star,]
+    } else {
+      star=sample(1:n, size=1)
+      stationary[i,]=x2[star,]
+    }
+  }
+  stationary
+}
+```
+
+```{r}
+set.seed(123)
+B <- 500
+Get_white <- function(x){
+  mean_x <- apply(x, 2, mean)
+xc <- sweep(x,2, mean_x, "-")
+#We will now find the sample covariance matrix. with the sample correction(n-1)
+cov_xc <- cov(xc)
+#We follow the paper and whiten using symmetric square root. #We will use svd to decompose the matrix
+#SVD decompose cov_xc = U D V^T. Since cov_xc is symmetric and positive definite, U = V = Q is an orthogonal matrix of eigenvectors and D = Lambda
+#is a diagonal matrix
+s <- svd(cov_xc)
+Lambda <- s$d
+Q <- s$u
+Lambda_inv_sqrt <- diag(1 / sqrt(Lambda))
+WZCA <- Q %*% tcrossprod(Lambda_inv_sqrt, Q)
+#Whitening data
+xw <- xc %*% WZCA
+#Check that the whitened data has identity covariance
+err <- max(abs(cov(xw) - diag(ncol(x))))
+if (err > 1e-8) stop("Whitening failed", signif(err, 3))
+xw
+}
+```
+```{r}
+#graphical summries
+layout(matrix(c(1,2,3,
+                4,4,4), nrow=2, byrow=TRUE),
+       heights=c(6,1))
+
+par(mar=c(4,4,3,1),
+    xpd=FALSE,
+    cex.main=1.5,
+    cex.lab=1.3,
+    cex.axis=1.2)
+#original setting1
+arror=array(0,c(10,10,12))
+for (i in 1:12) {
+  arror[,,i]=autoc(x,i)
+}
+autocor=numeric(12)
+autocor=arror[1,1,]
+plot(1:12, autocor, type="l", col="black", lwd=2,
+     xlab="Lag", ylab="Autocovariance",
+     main="Autocovariance of X1")
+#stationary with p=0.05
+set.seed(123)
+setting1stat05 = stationary_boot(x,0.05)
+arrstat05 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat05[,,i] = autoc(setting1stat05,i)
+}
+autocstat05 = arrstat05[1,1,]
+lines(1:12, autocstat05, type="l", col="blue", lwd=2)
+#stationary with p=0.02
+set.seed(123)
+setting1stat02 = stationary_boot(x,0.02)
+arrstat02 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat02[,,i] = autoc(setting1stat02,i)
+}
+autocstat02 = arrstat02[1,1,]
+lines(1:12, autocstat02, type="l", col="red", lwd=2)
+#block with l=50
+set.seed(123)
+setting1block50=fixed_boot(x,50)
+arrblock50=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock50[,,i]=autoc(setting1block50,i)
+}
+autocblock50=arrblock50[1,1,]
+lines(1:12, autocblock50, type="l", col="yellow", lwd=2)
+#block with l=20
+set.seed(123)
+setting1block20=fixed_boot(x,20)
+arrblock20=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock20[,,i]=autoc(setting1block20,i)
+}
+autocblock20=arrblock20[1,1,]
+lines(1:12, autocblock20, type="l", col="green", lwd=2)
+#iid
+set.seed(123)
+setting1iid = x[sample(1:nrow(x), nrow(x), replace=TRUE), ]
+arriid=array(0,c(10,10,12))
+for (i in 1:12) {
+  arriid[,,i]=autoc(setting1iid,i)
+}
+autociid=arriid[1,1,]
+lines(1:12,autociid,type='l',col='grey',lwd=2)
+
+
+#same for x=4
+#original x
+arror4=array(0,c(10,10,12))
+for (i in 1:12) {
+  arror4[,,i]=autoc(x,i)
+}
+autocor4=numeric(12)
+autocor4=arror4[4,4,]
+plot(1:12, autocor4, type="l", col="black", lwd=2,
+     xlab="Lag", ylab="Autocovariance",
+     main="Autocovariance of X4")
+
+#stationary with p=0.05
+set.seed(123)
+setting1stat05_4 = stationary_boot(x,0.05)
+arrstat05_4 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat05_4[,,i] = autoc(setting1stat05_4,i)
+}
+autocstat05_4 = arrstat05_4[4,4,]
+lines(1:12, autocstat05_4, type="l", col="blue", lwd=2)
+
+#stationary with p=0.02
+set.seed(123)
+setting1stat02_4 = stationary_boot(x,0.02)
+arrstat02_4 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat02_4[,,i] = autoc(setting1stat02_4,i)
+}
+autocstat02_4 = arrstat02_4[4,4,]
+lines(1:12, autocstat02_4, type="l", col="red", lwd=2)
+
+#block with l=50
+set.seed(123)
+setting1block50_4=fixed_boot(x,50)
+arrblock50_4=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock50_4[,,i]=autoc(setting1block50_4,i)
+}
+autocblock50_4=arrblock50_4[4,4,]
+lines(1:12, autocblock50_4, type="l", col="yellow", lwd=2)
+
+#block with l=20
+set.seed(123)
+setting1block20_4=fixed_boot(x,20)
+arrblock20_4=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock20_4[,,i]=autoc(setting1block20_4,i)
+}
+autocblock20_4=arrblock20_4[4,4,]
+lines(1:12, autocblock20_4, type="l", col="green", lwd=2)
+
+#iid
+set.seed(123)
+setting1iid_4 = x[sample(1:nrow(x), nrow(x), replace=TRUE), ]
+arriid4=array(0,c(10,10,12))
+for (i in 1:12) {
+  arriid4[,,i]=autoc(setting1iid_4,i)
+}
+autociid4=arriid4[4,4,]
+lines(1:12,autociid4,type='l',col='grey',lwd=2)
+
+
+
+#for x6
+#original x
+arror6=array(0,c(10,10,12))
+for (i in 1:12) {
+  arror6[,,i]=autoc(x,i)
+}
+autocor6=numeric(12)
+autocor6=arror6[6,6,]
+plot(1:12, autocor6, type="l", col="black", lwd=2,
+     xlab="Lag", ylab="Autocovariance",
+     main="Autocovariance of X6")
+
+#stationary with p=0.05
+set.seed(123)
+setting1stat05_6 = stationary_boot(x,0.05)
+arrstat05_6 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat05_6[,,i] = autoc(setting1stat05_6,i)
+}
+autocstat05_6 = arrstat05_6[6,6,]
+lines(1:12, autocstat05_6, type="l", col="blue", lwd=2)
+
+#stationary with p=0.02
+set.seed(123)
+setting1stat02_6 = stationary_boot(x,0.02)
+arrstat02_6 = array(0,c(10,10,12))
+for (i in 1:12) {
+  arrstat02_6[,,i] = autoc(setting1stat02_6,i)
+}
+autocstat02_6 = arrstat02_6[6,6,]
+lines(1:12, autocstat02_6, type="l", col="red", lwd=2)
+
+#block with l=50
+set.seed(123)
+setting1block50_6=fixed_boot(x,50)
+arrblock50_6=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock50_6[,,i]=autoc(setting1block50_6,i)
+}
+autocblock50_6=arrblock50_6[6,6,]
+lines(1:12, autocblock50_6, type="l", col="yellow", lwd=2)
+
+#block with l=20
+set.seed(123)
+setting1block20_6=fixed_boot(x,20)
+arrblock20_6=array(0,c(10,10,12))
+for (i in 1:12) {
+  arrblock20_6[,,i]=autoc(setting1block20_6,i)
+}
+autocblock20_6=arrblock20_6[6,6,]
+lines(1:12, autocblock20_6, type="l", col="green", lwd=2)
+
+#iid
+set.seed(123)
+setting1iid_6 = x[sample(1:nrow(x), nrow(x), replace=TRUE), ]
+arriid6=array(0,c(10,10,12))
+for (i in 1:12) {
+  arriid6[,,i]=autoc(setting1iid_6,i)
+}
+autociid6=arriid6[6,6,]
+lines(1:12,autociid6,type="l",col="grey",lwd=2)
+
+par(mar=c(0,0,0,0), xpd=FALSE)
+plot.new()
+
+legend("center",
+       legend=c("Original",
+                "Stationary p=0.05",
+                "Stationary p=0.02",
+                "Fixed block l=50",
+                "Fixed block l=20",
+                "IID bootstrap"),
+       col=c("black","blue","red","yellow","green","grey"),
+       lty=1,
+       lwd=2,
+       ncol=3,
+       cex=0.95,
+       bty="n")
+layout(1)
+par(mar=c(5.1,4.1,4.1,2.1), xpd=FALSE)
+```
+
+Looking at the ACF both the fixed and stationary bootstraps are able to keep the local dependence, while it is clear for ie variable 9 that the iid resampling does not keep any of the dependency.
+
+**Part C**
+
+```{r}
+library(JADE)
+#We use simplify = "array" such that sapply returns a pxpxK matrix. We increase maxiter to get convergence
+acf_rjd <- function(data, taus) {
+  rjd(sapply(taus, function(tau) autoc(data, tau), simplify = "array"),eps = 1e-5, maxiter = 1500)
+}
+
+Get_U <- function(xw, Taus){
+  #We do the joint diagonilzation on the whitend data, which returns the diagnolizer U and the approximate diagonalized AC 
+  rjd <- acf_rjd(xw,Taus)
+  U <- rjd$V
+  d <- apply(rjd$D,3, diag)
+  #We then sum over the lag set to optain the diagnoal matrix. Idea is to sum all lags^2 for each variable, the result is a vector
+  lambda_diag <- rowSums(d^2) 
+  #We then order the diagonal from largest to smallest and U such that it match lambda_diag
+  ord <- order(lambda_diag, decreasing = TRUE)
+  U_ord <- U[,ord]
+  lambda_diag_ord <- lambda_diag[ord]
+  list(U =U_ord, Lambda = lambda_diag_ord)
+}
+rjd <- acf_rjd(x,1:12)
+toten=sum(rjd$D^2)
+diagen=0
+for (i in 1:12) {
+  diagen=diagen+sum(diag(rjd$D[,,i])^2)
+}
+
+
+f_replicate <- function(x, U_org, Taus,b, stationary = TRUE){
+  p <- ncol(U_org)
+  #We do either fixed or stationary (default) bootstrap
+  xs <- if (stationary) stationary_boot(x, 1/b) else fixed_boot(x, b)
+  xws <- Get_white(xs)
+  #We find U from one bootstrap sample
+  U_star <- Get_U(xws,Taus)$U
+  sapply(1:(p - 1), function(k) {
+    #Drop false keeps the structure of the matrix
+    B_hat <- U_org[,1:k, drop = FALSE]
+    B_star <- U_star[,1:k, drop = FALSE]
+    1 - abs(det(crossprod(B_hat,B_star)))})
+}
+
+f_k_func <- function(x,U,Taus,b,B, stationary = TRUE){
+  #we first get all the det for the sum over all bootstrap samples, by replicating B 1 - abs(det)
+  f <- replicate(B, {
+  f_replicate(x, U, Taus,b, stationary)
+  })
+  #We then sum over the det and and 0 as the first value
+  f_0 <- c(0, rowMeans(f))
+  f_0_sum <- sum(f_0)
+  #We then get the vector of all the normalized f_k values
+  f_k <- f_0 / (1 + f_0_sum)
+  f_k
+}
+g <- function(x, Taus,b,B, stationary = TRUE){
+  #Get U and lambda from the original sample
+  xw <- Get_white(x)
+  res_org <- Get_U(xw, Taus)
+  #find f
+  f_k <- f_k_func(x, res_org$U,Taus,b,B, stationary)
+  lambda <- res_org$Lambda
+  #find phi
+  phi <- lambda / (1 + sum(lambda))
+  #find g
+  g_k <- f_k + phi
+  list(f = f_k, phi = phi, g = g_k, q_hat = which.min(g_k) - 1)
+}
+
+```
+
+```{r}
+set.seed(123)
+b <- 20
+B<- 500
+taus <- 1:12
+rjd <- acf_rjd(xw,taus)
+rjd
+g(x,taus,b,B)
+
+(toten-diagen)/toten#the diagonalization isn´t perfect because it´s impossible to 
+#diagonalize every of the 12 matrices a the same time
+
+res <- Get_U(xw,1:12)
+res
+#We have a 10x10 matrix which matches our expectations
+dim(res$U)
+#Lambda is a vector with 10 elements and it is strictly decreasing which is what we wanted and with the first
+# 5 values being clearly larger then the other
+res$Lambda
+#q_hat = 3 agrees with the orignial data, which had a large drop in U after first 3 values
+
+#Check that U is orthogonal
+crossprod(res$U)
+```
+
+```{r}
+
+#Plot for stationary boot
+lad <- g(x, 1:12, 20, 200)
+
+k <- 0:9
+# title suggesteion "Ladle plot, Setting 1, n = 1000, stationary bootstrap (b = 20)"
+plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad$f, type = "l", col = "black")
+lines(k, lad$phi, type = "l", col = "red")
+legend("topright", legend = c("f", expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+lad
+```
+
+```{r}
+#plot for fixed
+lad <- g(x, 1:12, 20, 200, FALSE)
+
+k <- 0:9
+# title sugestion "Ladle plot, Setting 1, n = 1000, fixed bootstrap (b = 20)"
+plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad$f, type = "l", col = "black")
+lines(k, lad$phi, type = "l", col = "red")
+legend("topright", legend = c("f",expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+lad
+```
+**Part D**
+First we will try to recreate the resuls from figure 1
+
+Both plots look similar, and have the same conclution. They are also in agreement with the result of figure one from the article
+
+```{r}
+set.seed(123)
+#Amount of independent datasets we will simualte for each time series (paper uses 2000)
+R <- 100
+#Amount of bootsrap samples within each ladle
+B <- 100
+#n is the length of the simulated series. The guess is that a longer series will improve the result
+ns <-c(200, 500, 1000,1500)
+#Length of block or expected length of block depending on bootstrap method
+bs <- c(5,10, 20, 30)
+results <- data.frame()
+for (n in ns) {
+  for (r in 1:R) {
+    print(r)
+  #Simulate data of length n. When we are making a new simulation instead always bootstraping from the same simulation we are removing the chance of the dataset lucky/unlucky for getting the correct value of 5. Hence this actually tells about the methods real performance of data with this type of distribution. I want to discuss with Andrea wether this is a hard data to replicate
+  x <- sim_setting1(n)$x
+    for (b in bs) {
+      #boptstrap with both fixed and stationary and extract q
+      q_F <- g(x, 1:12, b,B, FALSE)$q_hat
+      q_S <- g(x, 1:12, b, B)$q_hat
+      results <-rbind(results, data.frame(n = n, method = c("F", "S"), b = b, q_hat = c(q_F, q_S)))
+    }
+  }
+}
+
+```
+```{r}
+summary_q <- data.frame()
+mcse_q <- data.frame()
+for(n in ns){
+  for( m in c("F", "S")){
+    for(b in bs){
+      #Find q for the combination of sample size, method and block length
+      q <- results$q_hat[results$n == n & results$method == m & results$b == b]
+      counts <- numeric(10)
+      #summary
+      #count how many q's fell into each possible outcome
+      for(i in 1:10){
+        counts[i] <-sum(q == (i-1))
+      }
+      #Converge to percentage (not nessary for R = 100)
+      perc <- 100 * counts /length(q)
+      summary_q <- rbind(summary_q, data.frame(n = n, method = m, b = b, t(perc)))
+      #MCSE we know the true value is 5
+      I <- q == 5
+      #How many q turn out to be the true mean
+      p_hat <- mean(I)
+      R <- length(q)
+      mcse <- sd(I) / sqrt(R)
+      mcse_q <- rbind(mcse_q, data.frame(n =n, method =m, b = b,p = p_hat, MCSE = mcse, lower_bound = p_hat - 1.96 * mcse, upper_bound =p_hat + 1.96 * mcse ))
+    }
+  }
+}
+colnames(summary_q) <- c("n", "method", "b", paste0("q=", 0:9))
+summary_q
+#Not sure yet if it makes sense to include the MCSE
+mcse_q
+```
+
+**Part E**
+```{r}
+#Changing to timeseries data
+x <- read_table("timeseries.dat.txt", 
+                             col_names = FALSE)
+x<- as.matrix(x)
+```
+
+```{r}
+#a sensitivity analysis for the block-length choice;
+bs <- c(5,10, 20, 30, 40, 50)
+r <- 1
+B <- 500
+sensitivityanalysis <- do.call(rbind, lapply(bs, function(b){
+  data.frame(b =b, StationaryBootstrap = replicate(r,g(x, 1:12, b, B)$q_hat), FixedBootstrap = replicate(r,g(x, 1:12, b, B, FALSE)$q_hat))
+}))
+table(sensitivityanalysis$b, sensitivityanalysis$StationaryBootstrap)
+table(sensitivityanalysis$b, sensitivityanalysis$FixedBootstrap)
+```
+
+```{r}
+#the estimated signal dimension and the evidence supporting it
+#Run with stationary simulation
+taus <- 1:12 
+b<- 30
+B <- 500
+lad_sta <- g(x,taus,b,B)
+lad_sta
+#Run with fixed 
+lad_fix <- g(x,taus,b,B, FALSE)
+lad_fix
+s
+```
+
+```{r}
+#an appropriate visualization of the ladle criterion and its components;
+k <- 0:9
+# title sugestion "Ladle plot, time-series, stationary bootstrap (b = 30)"
+plot(k, lad_sta$g, type = "l", col = "green", ylim = range(0, lad_sta$g, lad_sta$f, lad_sta$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad_sta$f, type = "l", col = "black")
+lines(k, lad_sta$phi, type = "l", col = "red")
+legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
+axis(1, at = k)
+```
+
+```{r}
+k <- 0:9
+# title sugestion "Ladle plot, time-series, fixed bootstrap (b = 30)"
+plot(k, lad_fix$g, type = "l", col = "green", ylim = range(0, lad_fix$g, lad_fix$f, lad_fix$phi),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad_fix$f, type = "l", col = "black")
+lines(k, lad_fix$phi, type = "l", col = "red")
+legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
+axis(1, at = k)
+```
+
+```{r}
+#a comparison of the results obtained with the two bootstrap methods;
+k <- 0:9
+# title suggestion "Ladle plot, time-series, stationary (solid) and fixed (dashed) bootstrap (b = 30)"
+plot(k, lad_sta$g, type = "l", col = "green", ylim = range(0, lad_sta$g, lad_sta$f, lad_sta$phi, lad_fix$g, lad_fix$f),
+     xlab = "Component", ylab = "Criterion")
+lines(k, lad_sta$f, type = "l", col = "black")
+lines(k, lad_sta$phi, type = "l", col = "red")
+lines(k, lad_fix$g, type = "l", col = "green", lty = 2)
+lines(k, lad_fix$f, type = "l", col = "black", lty = 2)
+legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
+axis(1, at = k)
+```
+
+
+
+

@@ -478,22 +478,22 @@ crossprod(res$U)
 ```{r}
 
 #Plot for stationary boot
-lad <- g(x, 1:12, 20, 200)
+ladstat <- g(x, 1:12, 20, 500)
 
 k <- 0:9
 # title suggesteion "Ladle plot, Setting 1, n = 1000, stationary bootstrap (b = 20)"
-plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+plot(k, ladstat$g, type = "l", col = "green", ylim = range(0, ladstat$g, ladstat$f, ladstat$phi),
      xlab = "Component", ylab = "Criterion")
-lines(k, lad$f, type = "l", col = "black")
-lines(k, lad$phi, type = "l", col = "red")
+lines(k, ladstat$f, type = "l", col = "black")
+lines(k, ladstat$phi, type = "l", col = "red")
 legend("topright", legend = c("f", expression(phi),"g"), col = c("black","red", "green"), lty = 1)
 axis(1, at = k)
-lad
+ladstat
 ```
 
 ```{r}
 #plot for fixed
-lad <- g(x, 1:12, 20, 200, FALSE)
+lad <- g(x, 1:12, 20, 500, FALSE)
 
 k <- 0:9
 # title sugestion "Ladle plot, Setting 1, n = 1000, fixed bootstrap (b = 20)"
@@ -505,6 +505,26 @@ legend("topright", legend = c("f",expression(phi),"g"), col = c("black","red", "
 axis(1, at = k)
 lad
 ```
+```{r,fig.width=12,fig.height=5}
+#figure for the report
+jpeg("ladle_comparison.jpeg",
+     width=2400, height=1000, res=200, quality=100)
+par(mfrow=c(1,2))
+plot(k, ladstat$g, type = "l", col = "green", ylim = range(0, ladstat$g, ladstat$f, ladstat$phi),
+     xlab = "Component", ylab = "Criterion", main = 'Stationary bootstrap with p=0.05')
+lines(k, ladstat$f, type = "l", col = "black")
+lines(k, ladstat$phi, type = "l", col = "red")
+legend("topright", legend = c("f", expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+plot(k, lad$g, type = "l", col = "green", ylim = range(0, lad$g, lad$f, lad$phi),
+     xlab = "Component", ylab = "Criterion", main='Fixed block bootstrap with l=20')
+lines(k, lad$f, type = "l", col = "black")
+lines(k, lad$phi, type = "l", col = "red")
+legend("topright", legend = c("f",expression(phi),"g"), col = c("black","red", "green"), lty = 1)
+axis(1, at = k)
+par(mfrow=c(1,1))
+```
+
 **Part D**
 First we will try to recreate the resuls from figure 1
 
@@ -637,28 +657,51 @@ x<- as.matrix(x)
 ```
 
 ```{r}
-#a sensitivity analysis for the block-length choice;
-bs <- c(5,10, 20, 30, 40, 50)
-r <- 1
-B <- 500
-sensitivityanalysis <- do.call(rbind, lapply(bs, function(b){
-  data.frame(b =b, StationaryBootstrap = replicate(r,g(x, 1:12, b, B)$q_hat), FixedBootstrap = replicate(r,g(x, 1:12, b, B, FALSE)$q_hat))
-}))
-table(sensitivityanalysis$b, sensitivityanalysis$StationaryBootstrap)
-table(sensitivityanalysis$b, sensitivityanalysis$FixedBootstrap)
-```
-
-```{r}
 #the estimated signal dimension and the evidence supporting it
 #Run with stationary simulation
+set.seed(123)
 taus <- 1:12 
-b<- 30
+b<- 10
 B <- 500
-lad_sta <- g(x,taus,b,B)
-lad_sta
+lad_sta10 <- g(x,taus,b,B)
+lad_sta10
 #Run with fixed 
-lad_fix <- g(x,taus,b,B, FALSE)
-lad_fix
+lad_fix10 <- g(x,taus,b,B, FALSE)
+lad_fix10
+
+
+b<- 20
+lad_sta20 <- g(x,taus,b,B)
+lad_sta20
+#Run with fixed 
+lad_fix20 <- g(x,taus,b,B, FALSE)
+lad_fix20
+
+
+b<- 30
+lad_sta30 <- g(x,taus,b,B)
+lad_sta30
+#Run with fixed 
+lad_fix30 <- g(x,taus,b,B, FALSE)
+lad_fix30
+
+
+b<- 40
+lad_sta40 <- g(x,taus,b,B)
+lad_sta40
+#Run with fixed 
+lad_fix40 <- g(x,taus,b,B, FALSE)
+lad_fix40
+
+
+b<- 50
+lad_sta50 <- g(x,taus,b,B)
+lad_sta50
+#Run with fixed 
+lad_fix50 <- g(x,taus,b,B, FALSE)
+lad_fix50
+
+
 s
 ```
 
@@ -666,10 +709,10 @@ s
 #an appropriate visualization of the ladle criterion and its components;
 k <- 0:9
 # title sugestion "Ladle plot, time-series, stationary bootstrap (b = 30)"
-plot(k, lad_sta$g, type = "l", col = "green", ylim = range(0, lad_sta$g, lad_sta$f, lad_sta$phi),
+plot(k, lad_sta30$g, type = "l", col = "green", ylim = range(0, lad_sta30$g, lad_sta30$f, lad_sta30$phi),
      xlab = "Component", ylab = "Criterion")
-lines(k, lad_sta$f, type = "l", col = "black")
-lines(k, lad_sta$phi, type = "l", col = "red")
+lines(k, lad_sta30$f, type = "l", col = "black")
+lines(k, lad_sta30$phi, type = "l", col = "red")
 legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
 axis(1, at = k)
 ```
@@ -677,10 +720,10 @@ axis(1, at = k)
 ```{r}
 k <- 0:9
 # title sugestion "Ladle plot, time-series, fixed bootstrap (b = 30)"
-plot(k, lad_fix$g, type = "l", col = "green", ylim = range(0, lad_fix$g, lad_fix$f, lad_fix$phi),
+plot(k, lad_fix30$g, type = "l", col = "green", ylim = range(0, lad_fix30$g, lad_fix30$f, lad_fix30$phi),
      xlab = "Component", ylab = "Criterion")
-lines(k, lad_fix$f, type = "l", col = "black")
-lines(k, lad_fix$phi, type = "l", col = "red")
+lines(k, lad_fix30$f, type = "l", col = "black")
+lines(k, lad_fix30$phi, type = "l", col = "red")
 legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
 axis(1, at = k)
 ```
@@ -689,14 +732,15 @@ axis(1, at = k)
 #a comparison of the results obtained with the two bootstrap methods;
 k <- 0:9
 # title suggestion "Ladle plot, time-series, stationary (solid) and fixed (dashed) bootstrap (b = 30)"
-plot(k, lad_sta$g, type = "l", col = "green", ylim = range(0, lad_sta$g, lad_sta$f, lad_sta$phi, lad_fix$g, lad_fix$f),
-     xlab = "Component", ylab = "Criterion")
-lines(k, lad_sta$f, type = "l", col = "black")
-lines(k, lad_sta$phi, type = "l", col = "red")
-lines(k, lad_fix$g, type = "l", col = "green", lty = 2)
-lines(k, lad_fix$f, type = "l", col = "black", lty = 2)
+plot(k, lad_sta30$g, type = "l", col = "green", ylim = range(0, lad_sta30$g, lad_sta30$f, lad_sta30$phi, lad_fix30$g, lad_fix30$f),
+     xlab = "Component", ylab = "Criterion", main='Ladle criterion for the real time series data')
+lines(k, lad_sta30$f, type = "l", col = "black")
+lines(k, lad_sta30$phi, type = "l", col = "red")
+lines(k, lad_fix30$g, type = "l", col = "green", lty = 2)
+lines(k, lad_fix30$f, type = "l", col = "black", lty = 2)
 legend("topright", legend = c("f", expression(phi), "g"), col = c("black", "red", "green"), lty = 1)
 axis(1, at = k)
+legend('top',legend = c('Stationary (p=1/30)','Fixed block (l=30)'), col='black',lty=c(1,2), bty='n')
 ```
 
 

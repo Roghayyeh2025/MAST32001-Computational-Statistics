@@ -67,13 +67,21 @@ xw <- xc %*% WZCA
 #we will devide by n-tau
 #We do up to 12 lags for autocorrelationon
 apply(xw, 2, mean)
-cov(xw)
+cov_xw <-cov(xw)
+cov_tab <- formatC(cov_xw, format = "e", digits = 2)
+diag(cov_tab) <- "1"
+dimnames(cov_tab) <- list(paste0("$X_{", 1:10, "}$"), paste0("$X_{", 1:10, "}$"))
+#Translate the table to R for reporting
+latex_tab <- knitr::kable(cov_tab, format = "latex", booktabs = TRUE,
+                          align = "r", escape = FALSE,
+                          caption = "Sample covariance of the whitened data")
+cat(latex_tab)
 # in the paper they test up to 12 lags
 taus <- 1:12 
-#array that contain the autocorrelations
+#array that contain the auto covariance
 p <- ncol(xw)
 acm <- array(0,dim = c(p,p,length(taus)))
-#Since the data is whitenend whe should not devide by the covariance as it is the identity and since it is centered we should not subtract the mean when calculating the covariance as it is 0
+#Since the data is centered we should not subtract the mean when calculating the covariance as it is 0. This is only the case as we would have chosen to substract the whole mean
 autoc <- function(data, tau){
 n <- nrow(data)
 1/(n-tau) * crossprod(data[1:(n - tau), ],data[(tau + 1):n, ])
@@ -81,7 +89,6 @@ n <- nrow(data)
 for (k in seq_along(taus)){
   acm[,,k] <- autoc(xw,taus[k])
 }
-isSymmetric(autoc(xw, 1))
 ```
 
 **Part B**
@@ -91,12 +98,8 @@ isSymmetric(autoc(xw, 1))
 #fix a number p in 0 to 1
 #Make a sequence of iid random variables L independent of X. With prob of L_i = m bing 1 − p)^(m−1) · p for m = 1,2...
 #Independent of X_i and L_1 make I_1,I_2,... seq of iid var with discrete uniform dist on {1,..,N}
-#We now generate X_1*,...,X_N*. The first block is B_{I_1,L_1} such that X*_1 = X_{I1},... X*_{L_1} = X_{I_1 + #L_1-1} and the pseudo-time series finish once we have N observations. Thereafter we compute T_N(X*) or R_N(X*;T_n)
-#Here the conditional dist of R_n given X is the stationary bootstrap approximation to the true sampling dist of R_N(X,mu)
-#For the code first define the idx using above information about I and L, then we can pull the index right out of x
+#We now generate X_1*,...,X_N*. The first block is B_{I_1,L_1} such that X*_1 = X_{I1},... X*_{L_1} = X_{I_1 + #L_1-1} and the pseudo-time series finish once we have N observations.
 # For the fixed bootstrap the length of a block is the tuning param, and for stationary bootstrap the probablity p is the tuning param. 
-
-
 
 fixed_boot <- function(x,l){
   n=nrow(x)
@@ -116,12 +119,14 @@ stationary_boot <- function(x,prob){
   n=nrow(x)
   nvar=ncol(x)
   stationary=matrix(rep(0,n*nvar), nrow =n )
+  #We repeat the data for it to emulate circular data
   x2=matrix(rep(0,n*nvar*2), nrow=n*2)
   x2[1:n,]=x
   x2[(n+1):(2*n),]=x
   star=sample(1:n, size=1)
   stationary[1,]=x2[star,]
   for (i in 2:n) {
+    #we use runif to decide the length of each block
     if (runif(1)>=prob) {
       star=star+1
       stationary[i,]=x2[star,]
@@ -137,14 +142,11 @@ stationary_boot <- function(x,prob){
 ```{r}
 set.seed(123)
 B <- 500
+#Build the whitning into a function to use for the rest of the code
 Get_white <- function(x){
   mean_x <- apply(x, 2, mean)
 xc <- sweep(x,2, mean_x, "-")
-#We will now find the sample covariance matrix. with the sample correction(n-1)
 cov_xc <- cov(xc)
-#We follow the paper and whiten using symmetric square root. #We will use svd to decompose the matrix
-#SVD decompose cov_xc = U D V^T. Since cov_xc is symmetric and positive definite, U = V = Q is an orthogonal matrix of eigenvectors and D = Lambda
-#is a diagonal matrix
 s <- svd(cov_xc)
 Lambda <- s$d
 Q <- s$u
@@ -378,30 +380,26 @@ Looking at the ACF both the fixed and stationary bootstraps are able to keep the
 
 ```{r}
 library(JADE)
-#We use simplify = "array" such that sapply returns a pxpxK matrix. We increase maxiter to get convergence
+#We use simplify = "array" such that sapply returns a pxpxK matrix. We increase maxiter and lower the critia of convergence to achieve convergence
 acf_rjd <- function(data, taus) {
   rjd(sapply(taus, function(tau) autoc(data, tau), simplify = "array"),eps = 1e-5, maxiter = 1500)
 }
 
 Get_U <- function(xw, Taus){
-  #We do the joint diagonilzation on the whitend data, which returns the diagnolizer U and the approximate diagonalized AC 
+  #We do the joint diagonilzation with rjd on the whitend data, which returns the diagnolizer U and the approximate diagonalized AC 
   rjd <- acf_rjd(xw,Taus)
   U <- rjd$V
   d <- apply(rjd$D,3, diag)
   #We then sum over the lag set to optain the diagnoal matrix. Idea is to sum all lags^2 for each variable, the result is a vector
   lambda_diag <- rowSums(d^2) 
-  #We then order the diagonal from largest to smallest and U such that it match lambda_diag
+  #Order Lambda from largest to smallest
   ord <- order(lambda_diag, decreasing = TRUE)
-  U_ord <- U[,ord]
   lambda_diag_ord <- lambda_diag[ord]
+  #We then order the diagonal from largest to smallest and U such that it match lambda_diag_ord
+  U_ord <- U[,ord]
   list(U =U_ord, Lambda = lambda_diag_ord)
 }
-rjd <- acf_rjd(x,1:12)
-toten=sum(rjd$D^2)
-diagen=0
-for (i in 1:12) {
-  diagen=diagen+sum(diag(rjd$D[,,i])^2)
-}
+
 
 
 f_replicate <- function(x, U_org, Taus,b, stationary = TRUE){
@@ -447,6 +445,7 @@ g <- function(x, Taus,b,B, stationary = TRUE){
 ```
 
 ```{r}
+#Run relevant checks 
 set.seed(123)
 b <- 20
 B<- 500
@@ -455,6 +454,11 @@ rjd <- acf_rjd(xw,taus)
 rjd
 g(x,taus,b,B)
 
+toten=sum(rjd$D^2)
+diagen=0
+for (i in 1:12) {
+  diagen=diagen+sum(diag(rjd$D[,,i])^2)
+}
 (toten-diagen)/toten#the diagonalization isn´t perfect because it´s impossible to 
 #diagonalize every of the 12 matrices a the same time
 
@@ -515,13 +519,13 @@ B <- 100
 #n is the length of the simulated series. The guess is that a longer series will improve the result
 ns <-c(200, 500, 1000,1500)
 #Length of block or expected length of block depending on bootstrap method
-bs <- c(5,10, 20, 30)
+bs <- c(5,10, 20, 30,50)
 results <- data.frame()
 for (n in ns) {
   for (r in 1:R) {
     print(r)
   #Simulate data of length n. When we are making a new simulation instead always bootstraping from the same simulation we are removing the chance of the dataset lucky/unlucky for getting the correct value of 5. Hence this actually tells about the methods real performance of data with this type of distribution. I want to discuss with Andrea wether this is a hard data to replicate
-  x <- sim_setting1(n)$x
+  x <- setting1(n)
     for (b in bs) {
       #boptstrap with both fixed and stationary and extract q
       q_F <- g(x, 1:12, b,B, FALSE)$q_hat
@@ -533,6 +537,7 @@ for (n in ns) {
 
 ```
 ```{r}
+#Build sumamry table
 summary_q <- data.frame()
 mcse_q <- data.frame()
 for(n in ns){
@@ -563,6 +568,64 @@ colnames(summary_q) <- c("n", "method", "b", paste0("q=", 0:9))
 summary_q
 #Not sure yet if it makes sense to include the MCSE
 mcse_q
+```
+```{r}
+# Taking a closer look between fixed and stationary with a larger R
+R <- 1000
+#Amount of bootsrap samples within each ladle
+B <- 100
+#n is the length of the simulated series. The guess is that a longer series will improve the result
+ns <-c(1000)
+#Length of block or expected length of block depending on bootstrap method
+bs <- c(10,20,30)
+results_sf <- data.frame()
+for (n in ns) {
+  for (r in 1:R) {
+    print(r)
+  #Simulate data of length n. When we are making a new simulation instead always bootstraping from the same simulation we are removing the chance of the dataset lucky/unlucky for getting the correct value of 5. Hence this actually tells about the methods real performance of data with this type of distribution. I want to discuss with Andrea wether this is a hard data to replicate
+  x <- setting1(n)
+    for (b in bs) {
+      #boptstrap with both fixed and stationary and extract q
+      q_F <- g(x, 1:12, b,B, FALSE)$q_hat
+      q_S <- g(x, 1:12, b, B)$q_hat
+      results_sf <-rbind(results_sf, data.frame(n = n, method = c("F", "S"), b = b, q_hat = c(q_F, q_S)))
+    }
+  }
+}
+```
+```{r}
+
+summary_sf <- data.frame()
+mcse_sf <- data.frame()
+for(n in ns){
+  for( m in c("F", "S")){
+    for(b in bs){
+      #Find q for the combination of sample size, method and block length
+      q <- results_sf$q_hat[results_sf$n == n & results_sf$method == m & results_sf$b == b]
+      counts <- numeric(10)
+      #summary
+      #count how many q's fell into each possible outcome
+      for(i in 1:10){
+        counts[i] <-sum(q == (i-1))
+      }
+      #Converge to percentage (not nessary for R = 100)
+      perc <- 100 * counts /length(q)
+      summary_sf <- rbind(summary_sf, data.frame(n = n, method = m, b = b, t(perc)))
+      #MCSE we know the true value is 5
+      I <- q == 5
+      #How many q turn out to be the true mean
+      p_hat <- mean(I)
+      R <- length(q)
+      mcse <- sd(I) / sqrt(R)
+      mcse_sf <- rbind(mcse_sf, data.frame(n =n, method =m, b = b,p = p_hat, MCSE = mcse, lower_bound = p_hat - 1.96 * mcse, upper_bound =p_hat + 1.96 * mcse ))
+    }
+  }
+}
+colnames(summary_sf) <- c("n", "method", "b", paste0("q=", 0:9))
+summary_sf
+#Not sure yet if it makes sense to include the MCSE
+mcse_sf
+```
 ```
 
 **Part E**

@@ -1110,3 +1110,236 @@ draws_D <- gibbs_mix(
   beta0 = beta0,
   seed = 4102
 )
+
+#Check the number of retained posterior draws.
+
+cat("Retained posterior draws:", length(draws_D$mu1), "\n")
+cat("Number of observations:", ncol(draws_D$z), "\n")
+
+# Post-process the retained draws to obtain interpretable component labels.
+mu_low_std_D <- pmin(draws_D$mu1, draws_D$mu2)
+mu_high_std_D <- pmax(draws_D$mu1, draws_D$mu2)
+
+# Identify the mixture weight associated with the lower-mean component.
+pi_low_D <- ifelse(
+  draws_D$mu1 < draws_D$mu2,
+  draws_D$pi,
+  1 - draws_D$pi
+)
+
+# Transform component means back to minutes.
+mu_low_D <- y_info_D$mean + y_info_D$sd * mu_low_std_D
+mu_high_D <- y_info_D$mean + y_info_D$sd * mu_high_std_D
+
+# Transform the common variance back to squared minutes.
+sigma2_D <- y_info_D$sd^2 * draws_D$sigma2
+
+# Summarise the posterior distributions.
+posterior_summary_D <- data.frame(
+  parameter = c("mu_low_minutes", "mu_high_minutes", "pi_low", "sigma2_minutes_squared"),
+  mean = c(
+    mean(mu_low_D),
+    mean(mu_high_D),
+    mean(pi_low_D),
+    mean(sigma2_D)
+  ),
+  median = c(
+    median(mu_low_D),
+    median(mu_high_D),
+    median(pi_low_D),
+    median(sigma2_D)
+  ),
+  lower_95 = c(
+    quantile(mu_low_D, 0.025),
+    quantile(mu_high_D, 0.025),
+    quantile(pi_low_D, 0.025),
+    quantile(sigma2_D, 0.025)
+  ),
+  upper_95 = c(
+    quantile(mu_low_D, 0.975),
+    quantile(mu_high_D, 0.975),
+    quantile(pi_low_D, 0.975),
+    quantile(sigma2_D, 0.975)
+  )
+)
+
+print(posterior_summary_D)
+
+# Plot the observed eruption durations and the fitted mixture density.
+hist(
+  y,
+  breaks = 20,
+  probability = TRUE,
+  col = "grey85",
+  border = "white",
+  main = "Old Faithful: observed and fitted mixture",
+  xlab = "Eruption duration (minutes)"
+)
+
+# Evaluate the posterior mixture density over a grid of durations.
+x_grid_D <- seq(min(y), max(y), length.out = 300)
+
+density_draws_D <- sapply(seq_along(mu_low_D), function(i) {
+  pi_high_i <- 1 - pi_low_D[i]
+  
+  pi_low_D[i] * dnorm(
+    x_grid_D,
+    mean = mu_low_D[i],
+    sd = sqrt(sigma2_D[i])
+  ) +
+    pi_high_i * dnorm(
+      x_grid_D,
+      mean = mu_high_D[i],
+      sd = sqrt(sigma2_D[i])
+    )
+})
+
+# Add the posterior mean fitted density to the histogram.
+lines(
+  x_grid_D,
+  rowMeans(density_draws_D),
+  lwd = 2
+)
+
+# Calculate posterior allocation probabilities using ordered component labels.
+n_D <- length(y)
+
+p_low_D <- matrix(NA_real_, nrow = length(mu_low_D), ncol = n_D)
+
+for (s in seq_along(mu_low_D)) {
+  f_low <- pi_low_D[s] * dnorm(
+    y,
+    mean = mu_low_D[s],
+    sd = sqrt(sigma2_D[s])
+  )
+  
+  f_high <- (1 - pi_low_D[s]) * dnorm(
+    y,
+    mean = mu_high_D[s],
+    sd = sqrt(sigma2_D[s])
+  )
+  
+  p_low_D[s, ] <- f_low / (f_low + f_high)
+}
+
+# Summarise posterior allocation uncertainty for each observation.
+allocation_prob_D <- colMeans(p_low_D)
+
+allocation_summary_D <- data.frame(
+  eruption_duration = y,
+  probability_short_component = allocation_prob_D,
+  probability_long_component = 1 - allocation_prob_D
+)
+
+# Identify observations with the most uncertain allocations.
+allocation_summary_D$allocation_uncertainty <- pmin(
+  allocation_summary_D$probability_short_component,
+  allocation_summary_D$probability_long_component
+)
+
+head(allocation_summary_D)
+summary(allocation_summary_D$allocation_uncertainty)
+
+# Plot posterior allocation uncertainty for all observations.
+plot(
+  seq_along(allocation_summary_D$allocation_uncertainty),
+  allocation_summary_D$allocation_uncertainty,
+  pch = 16,
+  cex = 0.6,
+  xlab = "Observation index",
+  ylab = "Allocation uncertainty",
+  main = "Posterior allocation uncertainty"
+)
+
+abline(h = 0.25, lty = 2)
+# The 0.25 line is a visual reference, not a formal statistical threshold.
+
+
+# Run three chains with different random seeds.
+seeds_D <- c(4102, 5203, 6304)
+
+chains_D <- lapply(seeds_D, function(s) {
+  gibbs_mix(
+    y = y_std_D,
+    n_iter = 12000,
+    burn = 4000,
+    thin = 2,
+    seed = s
+  )
+})
+
+names(chains_D) <- paste0("chain", 1:3)
+
+# Check the number of retained draws in each chain.
+draw_counts_D <- sapply(chains_D, function(ch) length(ch$mu1))
+print(draw_counts_D)
+
+
+# Align component labels by ordering the component means.
+aligned_chains_D <- lapply(chains_D, function(ch) {
+  mu_low <- pmin(ch$mu1, ch$mu2)
+  mu_high <- pmax(ch$mu1, ch$mu2)
+  
+  pi_low <- ifelse(ch$mu1 < ch$mu2, ch$pi, 1 - ch$pi)
+  
+  data.frame(
+    mu_low = mu_low,
+    mu_high = mu_high,
+    pi_low = pi_low,
+    sigma2 = ch$sigma2
+  )
+})
+
+# Plot trace plots for the label-aligned parameters.
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+parameters_D <- c("mu_low", "mu_high", "pi_low", "sigma2")
+
+for (param in parameters_D) {
+  plot(
+    aligned_chains_D[[1]][[param]],
+    type = "l",
+    col = 1,
+    xlim = c(1, 4000),
+    xlab = "Stored post-burn-in draw",
+    ylab = param,
+    main = paste("Trace plot:", param)
+  )
+  
+  lines(aligned_chains_D[[2]][[param]], col = 2)
+  lines(aligned_chains_D[[3]][[param]], col = 3)
+}
+
+par(mfrow = c(1, 1))
+
+# Calculate approximate ESS and classical R-hat for each aligned parameter.
+parameters_D <- c("mu_low", "mu_high", "pi_low", "sigma2")
+
+diagnostics_D <- data.frame(
+  parameter = parameters_D,
+  ESS = sapply(parameters_D, function(param) {
+    sum(vapply(
+      aligned_chains_D,
+      function(ch) ess_one_chain(ch[[param]]),
+      numeric(1)
+    ))
+  }),
+  Rhat_classical = sapply(parameters_D, function(param) {
+    rhat_basic(lapply(
+      aligned_chains_D,
+      function(ch) ch[[param]]
+    ))
+  })
+)
+
+print(diagnostics_D, row.names = FALSE)
+
+# I fitted a two-component Gaussian mixture to the Old Faithful eruption
+# durations and compared the fitted distribution with the observed data.
+# The fitted mixture captures the distribution's two-peak structure.
+# Posterior allocation uncertainty is very low for most observations,
+# although some observations remain less clearly assigned.
+# I assessed MCMC behaviour using trace plots, approximate ESS, and
+# classical R-hat values for label-aligned parameters. These diagnostics
+# provide encouraging evidence of stable sampling, but do not prove
+# convergence conclusively.

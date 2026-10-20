@@ -86,7 +86,8 @@ standardise_data <- function(y) {
 #     [pi * phi(y_i; mu_1, sigma^2)
 #       + (1 - pi) * phi(y_i; mu_2, sigma^2)]
 #
-#   Z_i | rest ~ Bernoulli(p1_i), represented by labels 1 and 2.
+#So we have Z_i=1 with probability p1_i and Z_i=2 with probability 1-p1_i.
+#Equivalently Z_i | rest = 2 - Bernoulli(p1_i).
 #
 # Derivation for Z_i:
 # Conditional on the parameters, Bayes' rule gives the probability of

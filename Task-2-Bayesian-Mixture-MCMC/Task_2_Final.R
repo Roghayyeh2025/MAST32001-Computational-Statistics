@@ -436,7 +436,7 @@ plot_simulated_mixture <- function(sim, pars, main) {
           (1 - pars$pi) * dnorm(xx, pars$mu2, pars$sigma), lwd = 2, lty = 3)
   legend("topright",
          legend = c("Component 1", "Component 2", "Mixture"),
-         lty = c(1, 2, 3), lwd = 2, bty = "n")
+         lty = c(1, 2, 3), lwd = 2, bty = "o")
 }
 
 par(mfrow = c(1, 2))
@@ -604,24 +604,30 @@ print(c(mu_low = scenario_overlapping$mu1,
 # un-ordered mu1 and mu2 traces can also be inspected to see label switching.
 
 plot_chain_traces <- function(aligned_chains, main_prefix) {
-  par(mfrow = c(3, 1), mar = c(3, 4, 2, 1))
+  par(mfrow = c(3, 1), mar = c(5.5, 4, 3, 2))
   vars <- c("mu_low", "mu_high", "sigma2")
   for (v in vars) {
     all_y <- unlist(lapply(aligned_chains, function(ch) ch[[v]]))
+    draws <- length(aligned_chains[[1]][[v]])
+    x_lim <- c(1, draws * 1.11) #making room for legend
+    y_lim <- range(all_y, finite = TRUE)
     plot(aligned_chains[[1]][[v]], type = "l", col = 1,
          xlab = "Stored post-burn-in draw", ylab = v,
          main = paste(main_prefix, "-", v),
-         ylim = range(all_y, finite = TRUE))
+         xlim = x_lim, ylim = y_lim)
     if (length(aligned_chains) > 1) {
       for (ch in 2:length(aligned_chains)) {
         lines(aligned_chains[[ch]][[v]], col = ch)
       }
+      legend("topright", legend = names(aligned_chains),
+             col = seq_along(aligned_chains), lty = 1, 
+             bty = "o", cex = 0.95)
     }
   }
-  legend("topright", legend = names(aligned_chains),
-         col = seq_along(aligned_chains), lty = 1, bty = "n")
-  par(mfrow = c(1, 1))
+  par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
 }
+
+
 
 plot_chain_traces(aligned_separated, "Separated mixture")
 plot_chain_traces(aligned_overlapping, "Overlapping mixture")
@@ -695,13 +701,13 @@ print(ess_overlapping, row.names = FALSE)
 # ACF plots for representative label-invariant parameters from the first
 # chain. Slow decay indicates stronger serial dependence.
 
-par(mfrow = c(2, 2))
+par(mfrow = c(2, 2), mar = c(5, 4, 4, 2) + 0.1)
 for (v in c("mu_low", "mu_high", "pi_low", "sigma2")) {
   acf(aligned_separated[[1]][[v]], main = paste("Separated:", v))
 }
 par(mfrow = c(1, 1))
 
-par(mfrow = c(2, 2))
+par(mfrow = c(2, 2), mar = c(5, 4, 4, 2) + 0.1)
 for (v in c("mu_low", "mu_high", "pi_low", "sigma2")) {
   acf(aligned_overlapping[[1]][[v]], main = paste("Overlapping:", v))
 }
@@ -932,12 +938,15 @@ print(label_order_results, row.names = FALSE)
 # 2. Plot the raw, unconstrained parameter traces for the overlapping case.
 # These plots are produced before any relabelling so that the label issue
 # is not concealed by post-processing.
-par(mfrow = c(3, 1), mar = c(3.5, 4, 2.5, 1))
+par(mfrow = c(3, 1), mar = c(5, 4, 3, 2))
 for (v in c("mu1", "mu2", "pi")) {
   all_values <- unlist(lapply(chains_overlapping, function(ch) ch[[v]]))
+  n_draws <- length(chains_overlapping[[1]][[v]])
+  x_lims <- c(1, n_draws * 1.11) #making room for legend
+  y_lims <- range(all_values, finite = TRUE)
   plot(
-    chains_overlapping[[1]][[v]], type = "l",
-    ylim = range(all_values, finite = TRUE),
+    chains_overlapping[[1]][[v]], type = "l", col = 1,
+    xlim = x_lims, ylim = y_lims,
     xlab = "Stored post-burn-in draw", ylab = v,
     main = paste("Overlapping mixture: raw", v)
   )
@@ -946,10 +955,11 @@ for (v in c("mu1", "mu2", "pi")) {
       lines(chains_overlapping[[j]][[v]], col = j)
     }
     legend("topright", legend = names(chains_overlapping),
-           col = seq_along(chains_overlapping), lty = 1, bty = "n")
+           col = seq_along(chains_overlapping), lty = 1, 
+           bty = "o", cex = 0.95)
   }
 }
-par(mfrow = c(1, 1))
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
 
 # 3. Raw posterior summaries. These are shown before relabelling to make
 # clear that mu1, mu2, and pi do not necessarily have stable component-

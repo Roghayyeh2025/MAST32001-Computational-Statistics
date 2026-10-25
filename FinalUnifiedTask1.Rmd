@@ -556,8 +556,16 @@ for (n in ns) {
 }
 
 ```
+
 ```{r}
 #Build sumamry table
+R <- 100
+#Amount of bootsrap samples within each ladle
+B <- 100
+#n is the length of the simulated series. The guess is that a longer series will improve the result
+ns <-c(200, 500, 1000,1500)
+#Length of block or expected length of block depending on bootstrap method
+bs <- c(5,10, 20, 30,50)
 summary_q <- data.frame()
 mcse_q <- data.frame()
 for(n in ns){
@@ -589,6 +597,16 @@ summary_q
 #Not sure yet if it makes sense to include the MCSE
 mcse_q
 ```
+
+```{r}
+#Finding IF and IS for N =1000 and b = 5 with the two different methods
+IF <- results$q_hat[results$n == 1000 & results$method == "F" & results$b == 5] == 5
+IS <- results$q_hat[results$n == 1000 & results$method == "S" & results$b == 5] == 5
+#Checking how often IS was succes and IF not and the otherway around
+c(n10 = sum(IS & !IF), n01 = sum(!IS & IF))
+```
+
+
 ```{r}
 # Taking a closer look between fixed and stationary with a larger R
 R <- 1000
@@ -646,7 +664,44 @@ summary_sf
 #Not sure yet if it makes sense to include the MCSE
 mcse_sf
 ```
+
+```{r}
+#Make latex table of H0 = \pi_s = \pi_f
+bs_sf <- c(10, 20, 30)
+comp <- data.frame()
+for (b in bs_sf) {
+  IF <- results_sf$q_hat[results_sf$method == "F" & results_sf$b == b] == 5
+  IS <- results_sf$q_hat[results_sf$method == "S" & results_sf$b == b] == 5
+  pF <- mean(IF)
+  pS <- mean(IS)
+  d <- pS-pF
+  se <- sd(IS - IF) / sqrt(length(IF))
+  pval <- 2 * pnorm(-abs(d / se))
+  comp <- rbind(comp, data.frame(l = b, pF = pF, pS = pS, diff = d,
+                                 lower = d - 1.96 * se, upper = d + 1.96 * se,
+                                 p_value = pval))
+}
+comp
+
+lines <- c(
+  "\\begin{table}[ht]",
+  "\\centering",
+  "\\caption{Test of $H_0\\colon \\pi_S = \\pi_F$ at $n = 1000$ with $R = 1000$ replications.}",
+  "\\label{tab:sf-test}",
+  "\\begin{tabular}{rrrrcr}",
+  "\\toprule",
+  "$l$ & $\\hat\\pi_F$ & $\\hat\\pi_S$ & $\\hat\\pi_S - \\hat\\pi_F$ & 95\\% CI & $p$-value \\\\",
+  "\\midrule"
+)
+for (i in seq_len(nrow(comp))) {
+  r <- comp[i, ]
+  lines <- c(lines, sprintf("%d & %.3f & %.3f & %.3f & [%.3f, %.3f] & %.2f \\\\",
+                            r$l, r$pF, r$pS, r$diff, r$lower, r$upper, r$p_value))
+}
+lines <- c(lines, "\\bottomrule", "\\end{tabular}", "\\end{table}")
+writeLines(lines)
 ```
+
 
 **Part E**
 ```{r}
